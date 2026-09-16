@@ -1,0 +1,37 @@
+<resources>
+    <string name="app_name">PayGo</string>
+    <string name="action_settings">Settings</string>
+    <!-- Strings used for fragments for navigation -->
+    <string name="first_fragment_label">First Fragment</string>
+    <string name="second_fragment_label">Second Fragment</string>
+    <string name="next">Next</string>
+    <string name="previous">Previous</string>
+
+    <string name="start_reading_card">Start Reading Card</string>
+    <string name="reading">Reading…</string>
+    <string name="uid">UID:</string>
+    <string name="close">Close</string>
+    <string name="welcome_to_frog8">Welcome to F8 Pay</string>
+
+    <string name="fast_simple_secure">Fast. Simple. Secure.</string>
+    <string name="powered_fintech">Powered by Frog8 Fintech</string>
+    <string name="tap_card_icon">Please Tap Your Card</string>
+    <string name="powered_by">Powered By F8</string>
+    <string name="navigation_drawer_open">navigation drawer</string>
+    <string name="navigation_drawer_close">navigation_drawer_close</string>
+    <string name="drawer_activity">Drawer Activity</string>
+    <string name="todo">TODO</string>
+    <string name="please_tap_your_card_on_the_reader">Please tap your card on the reader</string>
+    <string name="keep_your_card_steady_for_2_3_seconds">Keep your card steady for 2–3 seconds</string>
+    <string name="amount">Amount:</string>
+    <string name="card_info">Card Info</string>
+    <string name="main_tag">Your Gateway to\nSmarter Payments</string>
+    <string name="main_tag_kannada">ಸರಳ ಮತ್ತು ಸ್ಮಾರ್ಟ್ ಪಾವತಿಗಳು</string>
+    <string name="sub_tag">Fast • Secure • Reliable Transactions</string>
+    <string name="sub_tag_kannada">ವೇಗವಾದ • ಸುರಕ್ಷಿತ • ವಿಶ್ವಾಸಾರ್ಹ ವ್ಯವಹಾರಗಳು</string>
+    <string name="admin">Admin</string>
+    <string name="logo">Logo</string>
+    <string name="back">Back</string>
+    <string name="internet_not_available">Internet is not available</string>
+    <string name="internet_connected">Internet connected</string>
+</resources>

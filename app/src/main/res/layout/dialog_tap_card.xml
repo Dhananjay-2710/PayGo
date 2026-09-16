@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="32dp"
+    android:background="@drawable/bg_fintech_gradient">
+
+    <!-- NFC Icon inside elevated card -->
+    <com.google.android.material.card.MaterialCardView
+        android:layout_width="140dp"
+        android:layout_height="140dp"
+        android:layout_marginBottom="24dp"
+        android:backgroundTint="@android:color/white"
+        app:cardCornerRadius="70dp"
+        app:cardElevation="10dp"
+        app:strokeColor="@color/fintech_accent"
+        app:strokeWidth="1dp">
+
+        <ImageView
+            android:id="@+id/ivNfcIcon"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="24dp"
+            android:src="@drawable/card_tap"
+            android:contentDescription="@string/tap_card_icon"
+            android:scaleType="centerInside" />
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Animated progress indicator -->
+    <com.google.android.material.progressindicator.CircularProgressIndicator
+        android:id="@+id/progressTap"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_marginBottom="24dp"
+        android:indeterminate="true"
+        app:indicatorColor="@color/fintech_primary"
+        app:trackThickness="6dp" />
+
+    <!-- Instruction message -->
+    <TextView
+        android:id="@+id/tvTapMessage"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/please_tap_your_card_on_the_reader"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="@android:color/white"
+        android:gravity="center"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Subtext -->
+    <TextView
+        android:id="@+id/tvTapSubMessage"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/keep_your_card_steady_for_2_3_seconds"
+        android:textSize="14sp"
+        android:textColor="@android:color/white"
+        android:alpha="0.8"
+        android:gravity="center" />
+
+</LinearLayout>

@@ -1,0 +1,21 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- deep dark base -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/f8_bg_dark"/>
+        </shape>
+    </item>
+
+    <!-- soft vignette center glow -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="radial"
+                android:gradientRadius="700dp"
+                android:centerX="50%"
+                android:centerY="40%"
+                android:startColor="@color/f8_neon_soft"
+                android:endColor="@android:color/transparent"/>
+        </shape>
+    </item>
+</layer-list>

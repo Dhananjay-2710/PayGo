@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="green">#21D305</color>
+    <color name="fintech_primary">#00897B</color>
+    <color name="fintech_primary_dark">#004D40</color>
+    <color name="fintech_accent">#26A69A</color>
+    <color name="fintech_text_secondary">#4E4E4E</color>
+    <color name="fintech_text_hint">#A0A0A0</color>
+    // New
+    <color name="f8_neon_soft">#8039FF14</color>    <!-- neon with alpha -->
+    <color name="f8_bg_dark">#0B2E12</color>        <!-- page background -->
+    <color name="f8_card_tint">#3b9630</color>    <!-- inner card fill -->
+    <color name="f8_text_secondary">#D8F9E0</color>
+    <color name="colorPrimary">#780084</color>
+    <color name="colorPrimaryDark">#780084</color>
+    <color name="colorAccent">#F47F36</color>
+    <color name="colorBlack">#000000</color>
+    <color name="colorWhite">#FFFFFF</color>
+    <color name="colorDarkGrey">#757575</color>
+    <color name="colorRed">#F90101</color>
+    <color name="colorLighterBlack">#23000000</color>
+    <color name="colorLightPink">#780084</color>
+    <color name="colorDarkPink">#780084</color>
+    <color name="colorLightGrey">#f1f2f3</color>
+    <color name="colorMediumGrey">#A9A9A9</color>
+    <color name="colorGreen">#038521</color>
+    <color name="colorDarkRed">#ff0000</color>
+    <color name="colorDarkOrange">#ffff8800</color>
+    <color name="colorLightGreen">#43a047</color>
+    <color name="purple_200">#780084</color>
+    <color name="purple_500">#780084</color>
+    <color name="purple_700">#780084</color>
+    <color name="teal_700">#038521</color>
+    <color name="line_color">#b3b3b3</color>
+    <color name="light_grey">#e6e6e6</color>
+    <color name="red">#cc0000</color>
+    <!-- Background Gradient -->
+    <color name="mint_start">#A8E6CF</color>
+    <color name="mint_end">#DFF5EC</color>
+
+    <!-- Text -->
+    <color name="text_dark_navy">#1C2B2D</color>
+    <color name="text_subtle">#6E7F80</color>
+
+    <!-- Blob Colors -->
+    <color name="lime_blob">#B8F28C</color>
+    <color name="white_soft">#FFFFFF</color>
+</resources>

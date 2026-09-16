@@ -1,0 +1,32 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- outer glow (soft radial) -->
+    <item android:top="6dp" android:bottom="6dp" android:left="6dp" android:right="6dp">
+        <shape>
+            <corners android:radius="24dp"/>
+            <gradient
+                android:type="radial"
+                android:gradientRadius="380dp"
+                android:centerX="50%"
+                android:centerY="50%"
+                android:startColor="@color/f8_neon_soft"
+                android:endColor="@android:color/transparent"/>
+        </shape>
+    </item>
+
+    <!-- inner fill -->
+    <item>
+        <shape>
+            <corners android:radius="24dp"/>
+            <solid android:color="@color/f8_card_tint"/>
+        </shape>
+    </item>
+
+    <!-- crisp neon stroke -->
+    <item>
+        <shape>
+            <corners android:radius="24dp"/>
+            <stroke android:width="3dp" android:color="@color/green"/>
+            <solid android:color="@android:color/transparent"/>
+        </shape>
+    </item>
+</layer-list>
