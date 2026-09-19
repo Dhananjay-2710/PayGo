@@ -9,7 +9,9 @@ import androidx.annotation.NonNull;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
+import com.cam.paygo.api.ApiClient;
 import com.cam.paygo.api.ApiConstants;
+import com.cam.paygo.api.TokenRefresher;
 import com.cam.paygo.manager.AuthManager;
 
 import java.io.File;
@@ -130,6 +132,8 @@ public class LogUploadWorker extends Worker {
         try {
             Log.d(TAG, "Uploading file: " + file.getName());
 
+            AuthManager.init(getApplicationContext());
+
             // ✅ Create temp upload directory
             File tempDir = new File(getApplicationContext().getCacheDir(), "upload_temp");
 
@@ -144,11 +148,13 @@ public class LogUploadWorker extends Worker {
 
             Log.d(TAG, "Temp upload file created: " + tempUploadFile.getAbsolutePath());
 
-            OkHttpClient client = new OkHttpClient.Builder()
-                    .retryOnConnectionFailure(true)
-                    .build();
+            OkHttpClient client = ApiClient.getInstance().getAuthedOkHttpClient();
 
             String token = AuthManager.getToken(getApplicationContext());
+            if (token == null || token.isEmpty()) {
+                Log.e(TAG, "No auth token for log upload");
+                return false;
+            }
 
             String serialNumber = getDeviceSerialNumber();
 
@@ -184,10 +190,25 @@ public class LogUploadWorker extends Worker {
             Request request = new Request.Builder()
                     .url(ApiConstants.BASE_URL + ApiConstants.PATH_FILE_UPLOAD)
                     .post(requestBody)
-                    .addHeader(ApiConstants.HEADER_AUTHORIZATION, ApiConstants.BEARER_PREFIX + token)
+                    .header(ApiConstants.HEADER_AUTHORIZATION, ApiConstants.BEARER_PREFIX + token)
                     .build();
 
             response = client.newCall(request).execute();
+
+            // Authed client already retries once on 401 via TokenAuthenticator.
+            // If still unauthorized, attempt one explicit refresh + retry for this raw call path.
+            if (response.code() == 401) {
+                response.close();
+                String refreshed = TokenRefresher.refreshBlocking();
+                if (refreshed == null || refreshed.isEmpty()) {
+                    Log.e(TAG, "Log upload unauthorized; refresh failed");
+                    return false;
+                }
+                Request retry = request.newBuilder()
+                        .header(ApiConstants.HEADER_AUTHORIZATION, ApiConstants.BEARER_PREFIX + refreshed)
+                        .build();
+                response = client.newCall(retry).execute();
+            }
 
             String responseBody = response.body() != null ? response.body().string() : "";
 

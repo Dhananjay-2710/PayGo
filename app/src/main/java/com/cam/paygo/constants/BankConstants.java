@@ -17,4 +17,6 @@ public final class BankConstants {
     public static final String BANK_OUTBOUND = "BANK_OUTBOUND";
     public static final String KIOSK_INBOUND = "KIOSK_INBOUND";
     public static final String KIOSK_OUTBOUND = "KIOSK_OUTBOUND";
+    public static final String MQTT_INBOUND = "MQTT_INBOUND";
+    public static final String MQTT_OUTBOUND = "MQTT_OUTBOUND";
 }

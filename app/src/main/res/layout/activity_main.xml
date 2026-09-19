@@ -1,149 +1,183 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.drawerlayout.widget.DrawerLayout xmlns:tools="http://schemas.android.com/tools"
+<androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/drawer_layout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto">
+    tools:openDrawer="start">
 
     <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@drawable/bg_mint_gradient">
 
-        <!-- Center Guideline (50% split) -->
-        <androidx.constraintlayout.widget.Guideline
-            android:id="@+id/guideline_center"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            app:layout_constraintGuide_percent="0.5" />
-
-        <!-- Top Right Logo -->
+        <!-- Atmosphere -->
         <View
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:background="@drawable/f8_small_logo"
-            android:translationX="-10dp"
-            android:translationY="10dp"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
+            android:layout_width="200dp"
+            android:layout_height="200dp"
+            android:alpha="0.30"
+            android:background="@drawable/blob_white_soft"
+            android:translationX="-80dp"
+            android:translationY="-30dp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
 
-        <!-- Mid-right blob -->
         <View
-            android:layout_width="140dp"
-            android:layout_height="140dp"
+            android:layout_width="150dp"
+            android:layout_height="150dp"
+            android:alpha="0.40"
             android:background="@drawable/blob_lime"
-            android:alpha="0.5"
-            android:translationX="80dp"
-            android:translationY="-100dp"
-            app:layout_constraintTop_toTopOf="parent"
+            android:translationX="60dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintVertical_bias="0.45" />
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintVertical_bias="0.42" />
 
-        <!-- Bottom blob -->
         <View
-            android:layout_width="320dp"
-            android:layout_height="320dp"
+            android:layout_width="300dp"
+            android:layout_height="300dp"
+            android:alpha="0.50"
             android:background="@drawable/blob_lime"
-            android:alpha="0.6"
-            android:translationX="140dp"
-            android:translationY="20dp"
+            android:translationX="130dp"
+            android:translationY="30dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- ================= ENGLISH (TOP HALF) ================= -->
+        <!-- Top-right mark -->
+        <ImageView
+            android:id="@+id/iv_top_logo"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginTop="16dp"
+            android:layout_marginEnd="16dp"
+            android:contentDescription="@string/logo"
+            android:scaleType="fitCenter"
+            android:src="@drawable/f8_small_logo"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
 
-        <!-- English Headline -->
+        <!-- Soft glow behind brand -->
+        <View
+            android:id="@+id/brand_glow"
+            android:layout_width="180dp"
+            android:layout_height="180dp"
+            android:background="@drawable/brand_glow"
+            app:layout_constraintBottom_toBottomOf="@id/brand_row"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="@id/brand_row" />
+
+        <!-- Brand -->
+        <LinearLayout
+            android:id="@+id/brand_row"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="72dp"
+            android:gravity="center"
+            android:orientation="horizontal"
+            app:layout_constraintBottom_toTopOf="@id/brand_underline"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintVertical_chainStyle="spread">
+
+            <TextView
+                android:id="@+id/tv_brand_pay"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:includeFontPadding="false"
+                android:letterSpacing="0.02"
+                android:text="@string/brand_pay"
+                android:textColor="@color/text_dark_navy"
+                android:textSize="52sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_brand_go"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:includeFontPadding="false"
+                android:letterSpacing="0.02"
+                android:text="@string/brand_go"
+                android:textColor="@color/brand_accent"
+                android:textSize="52sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <View
+            android:id="@+id/brand_underline"
+            android:layout_width="40dp"
+            android:layout_height="4dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/brand_underline"
+            app:layout_constraintBottom_toTopOf="@id/tv_headline"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/brand_row" />
+
+        <!-- Headline -->
         <TextView
             android:id="@+id/tv_headline"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginHorizontal="30dp"
+            android:layout_marginHorizontal="28dp"
             android:gravity="center"
+            android:includeFontPadding="false"
+            android:lineSpacingMultiplier="1.12"
             android:text="@string/main_tag"
             android:textColor="@color/text_dark_navy"
-            android:textSize="36sp"
+            android:textSize="30sp"
             android:textStyle="bold"
-            app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toTopOf="@id/tv_subheading"
-            app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintVertical_chainStyle="packed" />
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/brand_underline" />
 
-        <!-- English Subheading -->
+        <!-- Subheading -->
         <TextView
             android:id="@+id/tv_subheading"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:layout_marginHorizontal="40dp"
+            android:layout_marginHorizontal="36dp"
             android:gravity="center"
+            android:includeFontPadding="false"
+            android:letterSpacing="0.02"
+            android:lineSpacingMultiplier="1.15"
             android:text="@string/sub_tag"
-            android:textColor="@color/text_dark_navy"
-            android:textSize="22sp"
-            android:textStyle="bold"
-            app:layout_constraintTop_toBottomOf="@id/tv_headline"
-            app:layout_constraintBottom_toTopOf="@id/guideline_center"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-        <!-- ================= KANNADA (BOTTOM HALF) ================= -->
-
-        <!-- Kannada Headline -->
-        <TextView
-            android:id="@+id/tv_headline_kannada"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="30dp"
-            android:gravity="center"
-            android:text="@string/main_tag_kannada"
-            android:textColor="@color/text_dark_navy"
-            android:textSize="36sp"
-            android:textStyle="bold"
-            app:layout_constraintTop_toBottomOf="@id/guideline_center"
-            app:layout_constraintBottom_toTopOf="@id/tv_subheading_kannada"
-            app:layout_constraintStart_toStartOf="parent"
+            android:textColor="@color/text_body"
+            android:textSize="18sp"
+            app:layout_constraintBottom_toTopOf="@id/tv_powered_by"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintVertical_chainStyle="packed" />
-
-        <!-- Kannada Subheading -->
-        <TextView
-            android:id="@+id/tv_subheading_kannada"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:layout_marginHorizontal="40dp"
-            android:gravity="center"
-            android:text="@string/sub_tag_kannada"
-            android:textColor="@color/text_dark_navy"
-            android:textSize="22sp"
-            android:textStyle="bold"
-            app:layout_constraintTop_toBottomOf="@id/tv_headline_kannada"
-            app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
+            app:layout_constraintTop_toBottomOf="@id/tv_headline" />
 
         <!-- Footer -->
         <TextView
+            android:id="@+id/tv_powered_by"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="40dp"
+            android:layout_marginBottom="28dp"
+            android:background="@drawable/footer_chip"
+            android:letterSpacing="0.04"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="8dp"
             android:text="@string/powered_by"
+            android:textAllCaps="false"
             android:textColor="@color/text_subtle"
-            android:textSize="14sp"
+            android:textSize="13sp"
             app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
+            app:layout_constraintTop_toBottomOf="@id/tv_subheading" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- DRAWER -->
     <com.google.android.material.navigation.NavigationView
         android:id="@+id/nav_view"
         android:layout_width="280dp"
         android:layout_height="match_parent"
         android:layout_gravity="start"
         app:headerLayout="@layout/nav_header_main" />
+
 </androidx.drawerlayout.widget.DrawerLayout>

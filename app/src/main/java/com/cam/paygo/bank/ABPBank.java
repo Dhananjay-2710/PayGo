@@ -253,6 +253,16 @@ public class ABPBank {
                     json.put(JsonKeys.INVOICE_NO, invoiceNo);
                     break;
 
+                case TxnConstants.QR:
+                    json.put(JsonKeys.TRAN_TYPE, TxnConstants.QR);
+                    json.put(JsonKeys.AMOUNT, amount);
+                    break;
+
+                case TxnConstants.BQRANYRECEIPT:
+                    json.put(JsonKeys.TRAN_TYPE, TxnConstants.BQRANYRECEIPT);
+                    json.put(JsonKeys.RRN, rrn);
+                    break;
+
                 default:
                     Log.e(TAG, "Unknown type: " + type);
                     return null;
@@ -345,6 +355,10 @@ public class ABPBank {
                 return TxnConstants.REQUEST_CODE_REFUND;
             case TxnConstants.ANY_RECEIPT:
                 return TxnConstants.REQUEST_CODE_ANY_RECEIPT;
+            case TxnConstants.QR:
+                return TxnConstants.REQUEST_CODE_QR;
+            case TxnConstants.BQRANYRECEIPT:
+                return TxnConstants.REQUEST_CODE_BQRRECEIPT;
             default:
                 return TxnConstants.REQUEST_CODE_DEFAULT;
         }

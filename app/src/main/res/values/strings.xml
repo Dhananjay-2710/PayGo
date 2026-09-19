@@ -1,5 +1,7 @@
 <resources>
     <string name="app_name">PayGo</string>
+    <string name="brand_pay">Pay</string>
+    <string name="brand_go">Go</string>
     <string name="action_settings">Settings</string>
     <!-- Strings used for fragments for navigation -->
     <string name="first_fragment_label">First Fragment</string>
@@ -27,7 +29,7 @@
     <string name="card_info">Card Info</string>
     <string name="main_tag">Your Gateway to\nSmarter Payments</string>
     <string name="main_tag_kannada">ಸರಳ ಮತ್ತು ಸ್ಮಾರ್ಟ್ ಪಾವತಿಗಳು</string>
-    <string name="sub_tag">Fast • Secure • Reliable Transactions</string>
+    <string name="sub_tag">Fast • Secure • Reliable\nTransactions</string>
     <string name="sub_tag_kannada">ವೇಗವಾದ • ಸುರಕ್ಷಿತ • ವಿಶ್ವಾಸಾರ್ಹ ವ್ಯವಹಾರಗಳು</string>
     <string name="admin">Admin</string>
     <string name="logo">Logo</string>

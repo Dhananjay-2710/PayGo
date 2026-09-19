@@ -83,6 +83,10 @@ public class UartManager {
     }
 
     public boolean connect() {
+        if (!IntegrationModeStore.isUsb(context)) {
+            Log.i(TAG, "skip UART connect — mode=" + IntegrationModeStore.get(context));
+            return false;
+        }
         try {
             if (uartComm != null) {
                 uartComm.connect();
@@ -133,6 +137,10 @@ public class UartManager {
     }
 
     public void startListening() {
+        if (!IntegrationModeStore.isUsb(context)) {
+            Log.i(TAG, "skip UART listen — mode=" + IntegrationModeStore.get(context));
+            return;
+        }
         if (listening) return;
         listening = true;
         Log.d(TAG, "Inside Start Listening : " + timeStamp());
@@ -408,7 +416,7 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Error Response: " + finalJson);
 
                 AppLogger.trxn_log(context, BankConstants.KIOSK_OUTBOUND, finalJson);
@@ -456,7 +464,7 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Any Receipt Response : " + finalJson);
 
                 AppLogger.trxn_log(context, "KIOSK_OUTBOUND", finalJson);
@@ -503,7 +511,7 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Refund Response : " + finalJson);
 
                 AppLogger.trxn_log(context, "KIOSK_OUTBOUND", finalJson);
@@ -549,7 +557,7 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Transaction Enquiry Response : " + finalJson);
 
                 AppLogger.trxn_log(context, "KIOSK_OUTBOUND", finalJson);
@@ -603,7 +611,7 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Void Response : " + finalJson);
 
                 AppLogger.trxn_log(context, "KIOSK_OUTBOUND", finalJson);
@@ -661,7 +669,7 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Balance Enquiry Response : " + finalJson);
 
                 AppLogger.trxn_log(context, "KIOSK_OUTBOUND", finalJson);
@@ -727,7 +735,7 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Balance Update Response : " + finalJson);
 
                 AppLogger.trxn_log(context, "KIOSK_OUTBOUND", finalJson);
@@ -782,7 +790,7 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Service Creation Balance : " + finalJson);
 
                 AppLogger.trxn_log(context, "KIOSK_OUTBOUND", finalJson);
@@ -807,7 +815,7 @@ public class UartManager {
                         + "\"MESSAGE\": \"Credit/Debit " + topupAmount + "Transaction Successful\""
                         + "}";
 
-                uartComm.send(jsonResponse.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(jsonResponse.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Credit/Debit Response : " + jsonResponse);
             }
         } catch (Exception e) {
@@ -863,7 +871,7 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Sale Success Response : " + finalJson);
 
                 AppLogger.trxn_log(context, "KIOSK_OUTBOUND", finalJson);
@@ -919,7 +927,7 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Add Money Success Response : " + finalJson);
 
             }
@@ -944,13 +952,25 @@ public class UartManager {
 
                 String finalJson = json.toString();
 
-                uartComm.send(finalJson.getBytes(StandardCharsets.UTF_8));
+                sendUartBytes(finalJson.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "Send Serial Number Response : " + finalJson);
             }
 
         } catch (Exception e) {
             Log.e(TAG, "UART send error: " + e.getMessage(), e);
         }
+    }
+
+    private void sendUartBytes(byte[] data) throws CommException {
+        if (!IntegrationModeStore.isUsb(context)) {
+            Log.d(TAG, "skip UART TX — mode=" + IntegrationModeStore.get(context));
+            return;
+        }
+        if (uartComm == null) {
+            Log.e(TAG, "uartComm is null — cannot send");
+            return;
+        }
+        uartComm.send(data);
     }
 
     private String timeStamp() {

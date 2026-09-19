@@ -39,6 +39,9 @@ public class HeartbeatResponse {
         @SerializedName("server_time")
         private String serverTime;
 
+        @SerializedName("integration_type")
+        private String integrationType;
+
         public int getDeviceId() {
             return deviceId;
         }
@@ -53,6 +56,10 @@ public class HeartbeatResponse {
 
         public String getServerTime() {
             return serverTime;
+        }
+
+        public String getIntegrationType() {
+            return integrationType;
         }
     }
 }

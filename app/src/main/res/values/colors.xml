@@ -42,7 +42,11 @@
 
     <!-- Text -->
     <color name="text_dark_navy">#1C2B2D</color>
+    <color name="text_body">#3A4F51</color>
     <color name="text_subtle">#6E7F80</color>
+
+    <!-- Brand accent (for PayGo "Go") -->
+    <color name="brand_accent">#a7d222</color>
 
     <!-- Blob Colors -->
     <color name="lime_blob">#B8F28C</color>

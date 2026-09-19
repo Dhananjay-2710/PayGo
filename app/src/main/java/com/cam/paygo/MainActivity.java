@@ -66,11 +66,14 @@ import com.cam.paygo.bank.BankResponseProcessor;
 import com.cam.paygo.card.CardDetector;
 import com.cam.paygo.constants.AppConstants;
 import com.cam.paygo.constants.BankConstants;
+import com.cam.paygo.constants.IntegrationConstants;
 import com.cam.paygo.constants.JsonKeys;
+import com.cam.paygo.constants.MqttConstants;
 import com.cam.paygo.constants.StatusConstants;
 import com.cam.paygo.constants.TxnConstants;
 import com.cam.paygo.manager.AuthManager;
 import com.cam.paygo.manager.HeartbeatManager;
+import com.cam.paygo.manager.IntegrationModeStore;
 import com.cam.paygo.manager.UartManager;
 import com.cam.paygo.model.request.DeviceRequest;
 import com.cam.paygo.model.request.LoginRequest;
@@ -86,6 +89,9 @@ import com.pax.dal.entity.ENavigationKey;
 import com.pax.neptunelite.api.NeptuneLiteUser;
 
 import org.json.JSONObject;
+
+import com.cam.mqtt.MqttLog;
+import com.cam.mqtt.MqttManager;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -152,6 +158,15 @@ public class MainActivity extends AppCompatActivity {
     private final Runnable authRetryRunnable = this::initAuthFlow;
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
+    private MqttManager mqttManager;
+    private AlertDialog mqttMessageDialog;
+    /** True when the active bank sale was started from an MQTT card request. */
+    private boolean mqttTxnPending = false;
+    private String mqttRequestId = "";
+    private String mqttReplyTopic = "";
+    private String mqttAmount = "";
+    private String mqttPhone = "";
+    private String mqttTerminalId = "";
 
     private FlowState flowState = FlowState.IDLE;
     /** True from paymentLauncher.launch until ActivityResult returns — blocks a second bank Intent. */
@@ -478,15 +493,21 @@ public class MainActivity extends AppCompatActivity {
 
         });
 
-        if (uartManager.connect()) {
-            Log.d(TAG, "Start Listening");
-            uartManager.startListening();
-        }
-
-        // Bank Response Processor
+        // Bank Response Processor (UART replies are no-ops when mode=CLOUD)
         bankResponseProcessor = new BankResponseProcessor(uartManager, this);
 
-        // AuthFlow
+        // Start only one host channel based on local/server integration_type
+        applyIntegrationMode(IntegrationModeStore.get(this), false);
+
+        // AuthFlow — re-login when refresh fails / session invalidated
+        AuthManager.init(getApplicationContext());
+        AuthManager.setSessionListener(() -> {
+            Log.w(TAG, "Auth session invalid; restarting auth flow");
+            HeartbeatManager.getInstance().stop();
+            initAuthFlow();
+        });
+        HeartbeatManager.getInstance().setIntegrationTypeListener(type ->
+                runOnUiThread(() -> applyIntegrationMode(type, true)));
         initAuthFlow();
 
         // Periodic Upload Worker
@@ -704,12 +725,18 @@ public class MainActivity extends AppCompatActivity {
 
             if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
                 Log.d(TAG, "USB Detached");
-                uartManager.handleUsbDetached();
+                if (IntegrationModeStore.isUsb(MainActivity.this) && uartManager != null) {
+                    uartManager.handleUsbDetached();
+                }
             }
 
             if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
                 Log.d(TAG, "USB Attached");
-                uartManager.handleUsbAttached();
+                if (IntegrationModeStore.isUsb(MainActivity.this) && uartManager != null) {
+                    uartManager.handleUsbAttached();
+                } else {
+                    Log.d(TAG, "Ignoring USB attach — mode=" + IntegrationModeStore.get(MainActivity.this));
+                }
             }
         }
     };
@@ -857,17 +884,57 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         authBootstrapInProgress = true;
-        Log.d(TAG, "Call the login API");
+        AuthManager.init(getApplicationContext());
+        Log.d(TAG, "Auth bootstrap start");
         AuthRepository authRepo = new AuthRepository();
         String token = AuthManager.getToken(getApplicationContext());
 
         if (token != null) {
-            Log.d(TAG, "Using existing token");
-            registerDevice(authRepo, token);
+            if (!AuthManager.hasKnownExpiry() || AuthManager.isExpiringSoon()) {
+                Log.d(TAG, "Token near expiry or unknown TTL; refreshing before device register");
+                refreshThenRegister(authRepo, token);
+            } else {
+                Log.d(TAG, "Using existing token");
+                registerDevice(authRepo, token);
+            }
         } else {
             Log.d(TAG, "No token found, calling login API");
             loginAndRegister(authRepo);
         }
+    }
+
+    private void refreshThenRegister(AuthRepository authRepo, String token) {
+        AppLogger.api_log(getApplicationContext(), "TOKEN_REFRESH", "API Called");
+        authRepo.refresh(token, new Callback<>() {
+            @Override
+            public void onResponse(@NonNull Call<LoginResponse> call,
+                                   @NonNull Response<LoginResponse> response) {
+                if (response.isSuccessful()
+                        && response.body() != null
+                        && response.body().getData() != null
+                        && response.body().getData().getToken() != null) {
+                        String newToken = response.body().getData().getToken();
+                    long expiresIn = response.body().getData().resolveExpiresInSeconds();
+                    AuthManager.setSession(getApplicationContext(), newToken, expiresIn);
+                    AppLogger.api_log(getApplicationContext(), "TOKEN_REFRESH",
+                            "Success expires_in=" + expiresIn);
+                    clearAuthRetry();
+                    registerDevice(authRepo, newToken);
+                } else {
+                    Log.w(TAG, "Refresh failed HTTP " + response.code() + "; falling back to login");
+                    AppLogger.api_log(getApplicationContext(), "TOKEN_REFRESH", "Failed HTTP " + response.code());
+                    AuthManager.clearSession(getApplicationContext());
+                    loginAndRegister(authRepo);
+                }
+            }
+
+            @Override
+            public void onFailure(@NonNull Call<LoginResponse> call, @NonNull Throwable t) {
+                AppLogger.api_log(getApplicationContext(), "TOKEN_REFRESH", "Failure: " + t.getMessage());
+                // Keep existing token and try register; interceptor may still recover on 401
+                registerDevice(authRepo, token);
+            }
+        });
     }
 
     private void loginAndRegister(AuthRepository authRepo) {
@@ -884,21 +951,22 @@ public class MainActivity extends AppCompatActivity {
                     public void onResponse(@NonNull Call<LoginResponse> call,
                                            @NonNull Response<LoginResponse> response) {
 
-                        if (response.body() == null) {
+                        if (response.body() == null || response.body().getData() == null) {
                             AppLogger.api_log(getApplicationContext(), "LOGIN API RESPONSE", "Empty response");
                             scheduleAuthRetry("Login API returned empty body");
                             return;
                         }
 
                         String token = response.body().getData().getToken();
+                        long expiresIn = response.body().getData().resolveExpiresInSeconds();
 
-                        Log.d(TAG, "Token : " + token);
+                        Log.d(TAG, "Token received; expires_in=" + expiresIn);
 
                         AppLogger.api_log(getApplicationContext(),
                                 "LOGIN API RESPONSE",
-                                response.body().getMessage());
+                                response.body().getMessage() + " | expires_in=" + expiresIn);
 
-                        AuthManager.setToken(getApplicationContext(), token);
+                        AuthManager.setSession(getApplicationContext(), token, expiresIn);
                         clearAuthRetry();
 
                         registerDevice(authRepo, token);
@@ -919,13 +987,29 @@ public class MainActivity extends AppCompatActivity {
 
     private void registerDevice(AuthRepository authRepo, String token) {
 
+        String appVersion = getVersionNameOnly() + "+" + getBuildNumber();
+        String integrationType = IntegrationModeStore.get(this);
+
         AppLogger.api_log(getApplicationContext(),
                 "DEVICE REGISTER",
-                "Device Register API Called");
+                "Device Register API Called"
+                        + " serial=" + deviceSerialNumber
+                        + " model=" + deviceModel
+                        + " app_version=" + appVersion
+                        + " integration_type=" + integrationType);
+
+        Log.d(TAG, "Register device payload"
+                + " serial=" + deviceSerialNumber
+                + " model=" + deviceModel
+                + " app_version=" + appVersion
+                + " integration_type=" + integrationType);
 
         DeviceRepository deviceRepo = new DeviceRepository();
 
-        deviceRepo.registerDevice(token, new DeviceRequest(deviceSerialNumber, deviceModel), new Callback<>() {
+        deviceRepo.registerDevice(
+                token,
+                new DeviceRequest(deviceSerialNumber, deviceModel, appVersion, integrationType),
+                new Callback<>() {
                     @Override
                     public void onResponse(@NonNull Call<DeviceResponse> call,
                                            @NonNull Response<DeviceResponse> response) {
@@ -939,22 +1023,23 @@ public class MainActivity extends AppCompatActivity {
                                     DeviceResponse.getMessage());
 
                             HeartbeatManager.getInstance()
-                                    .start(token, getApplicationContext());
+                                    .start(getApplicationContext());
                             clearAuthRetry();
                             authBootstrapInProgress = false;
 
                         } else if (response.code() == 401) {
 
-                            Log.d(TAG, "Token expired, re-login");
+                            // Authenticator already attempted refresh; still 401 → full re-login
+                            Log.d(TAG, "Token invalid after refresh attempt, re-login");
 
-                            AuthManager.clearToken(getApplicationContext());
+                            AuthManager.clearSession(getApplicationContext());
                             authBootstrapInProgress = false;
 
                             loginAndRegister(authRepo);
                         } else if (response.code() == 409) {
                             Log.d(TAG, "Device already registered");
                             HeartbeatManager.getInstance()
-                                    .start(token, getApplicationContext());
+                                    .start(getApplicationContext());
                             clearAuthRetry();
                             authBootstrapInProgress = false;
                         } else {
@@ -1072,6 +1157,7 @@ public class MainActivity extends AppCompatActivity {
                                 Log.w(TAG, "RESULT_OK received without RESPONSE_TYPE; processing anyway");
                             }
                             bankResponseProcessor.process(result.getData());
+                            maybePublishMqttBankResult(true, result.getData(), "Sale completed");
                             return;
                         }
 
@@ -1083,6 +1169,7 @@ public class MainActivity extends AppCompatActivity {
                                 awaitingEnquiryAfterPaymentTimeout = false;
                                 flowState = FlowState.IDLE;
                                 sendApbTimeoutToTVM();
+                                maybePublishMqttBankResult(false, result.getData(), "Bank declined / cancelled");
                                 return;
                             }
 
@@ -1092,6 +1179,8 @@ public class MainActivity extends AppCompatActivity {
                                     ? " after deferred timeout — starting TRANSACTION_ENQUIRY"
                                     : " — starting TRANSACTION_ENQUIRY"));
                             awaitingEnquiryAfterPaymentTimeout = false;
+                            // For MQTT card sale, publish failure now (enquiry still runs for UART path).
+                            maybePublishMqttBankResult(false, result.getData(), "Bank non-OK during payment");
                             startTxnEnquiry();
                             return;
                         }
@@ -1284,6 +1373,408 @@ public class MainActivity extends AppCompatActivity {
         bankLaunchPending = false;
         flowState = FlowState.IDLE;
         unregisterNetworkCallback();
+        if (mqttMessageDialog != null && mqttMessageDialog.isShowing()) {
+            mqttMessageDialog.dismiss();
+        }
+        if (mqttManager != null) {
+            mqttManager.disconnect();
+        }
+    }
+
+    private String getMqttBrokerUrl() {
+        return MqttConstants.BROKER_URL;
+    }
+
+    /**
+     * Exclusive host channel: USB → UART, CLOUD → MQTT.
+     */
+    private void applyIntegrationMode(String type, boolean fromServer) {
+        String next = IntegrationConstants.orDefault(type);
+        String prev = IntegrationModeStore.get(this);
+        if (fromServer && prev.equals(next)) {
+            Log.d(TAG, "integration_type unchanged=" + next);
+            return;
+        }
+
+        IntegrationModeStore.set(this, next);
+        Log.i(TAG, "APPLY integration_type=" + next
+                + " previous=" + prev
+                + " fromServer=" + fromServer);
+
+        if (IntegrationConstants.CLOUD.equals(next)) {
+            stopUartChannel();
+            startMqttChannel();
+        } else {
+            mqttTxnPending = false;
+            stopMqttChannel();
+            startUartChannel();
+        }
+    }
+
+    private void startUartChannel() {
+        if (uartManager == null) {
+            uartManager = UartManager.getInstance(this);
+        }
+        if (uartManager.connect()) {
+            uartManager.startListening();
+            Log.i(TAG, "UART channel started");
+        } else {
+            Log.e(TAG, "UART channel failed to start");
+        }
+    }
+
+    private void stopUartChannel() {
+        if (uartManager != null) {
+            uartManager.disconnect();
+            Log.i(TAG, "UART channel stopped");
+        }
+    }
+
+    private void startMqttChannel() {
+        if (mqttManager != null && mqttManager.isConnected()) {
+            Log.i(TAG, "MQTT already connected");
+            return;
+        }
+        initMqttConnection();
+        Log.i(TAG, "MQTT channel starting");
+    }
+
+    private void stopMqttChannel() {
+        try {
+            if (mqttManager != null) {
+                mqttManager.disconnect();
+                Log.i(TAG, "MQTT channel stopped");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "MQTT stop error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Bootstraps MQTT using device serial as clientId.
+     * Ported from mqtt.MainFragment#initMqttConnection for PayGo MainActivity.
+     */
+    private void initMqttConnection() {
+        mqttManager = MqttManager.getInstance();
+        String clientId = deviceSerialNumber;
+        if (clientId == null || clientId.trim().isEmpty()) {
+            clientId = "PayGo_" + System.currentTimeMillis();
+        }
+
+        mqttManager.initialize(this, getMqttBrokerUrl(), clientId);
+        mqttManager.setMqttEventListener(new MqttManager.MqttEventListener() {
+            @Override
+            public void onConnected() {
+                MqttLog.d("MQTT: Connected successfully");
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this,
+                        "Connected with MQTT",
+                        Toast.LENGTH_SHORT
+                ).show());
+                mqttManager.startStatusUpdate();
+            }
+
+            @Override
+            public void onConnectionFailed(Throwable exception) {
+                MqttLog.e("MQTT: Connection failed", exception);
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this,
+                        "MQTT: Connection Failed",
+                        Toast.LENGTH_SHORT
+                ).show());
+            }
+
+            @Override
+            public void onConnectionLost(Throwable cause) {
+                MqttLog.e("MQTT: Connection lost", cause);
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this,
+                        "MQTT: Connection Lost",
+                        Toast.LENGTH_SHORT
+                ).show());
+            }
+
+            @Override
+            public void onSubscribed(String topic) {
+                MqttLog.i("MQTT: Subscriber is listening on: " + topic);
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this,
+                        "MQTT listening:\n" + topic,
+                        Toast.LENGTH_LONG
+                ).show());
+            }
+
+            @Override
+            public void onMessageReceived(String topic, String message) {
+                MqttLog.i("MQTT: Message received on topic [" + topic + "]: " + message);
+                runOnUiThread(() -> handleMqttInboundMessage(topic, message));
+            }
+        });
+
+        if (!mqttManager.isConnected()) {
+            mqttManager.connect(
+                    MqttConstants.USERNAME,
+                    MqttConstants.PASSWORD
+            );
+        }
+    }
+
+    /**
+     * MQTT → normalize card request → show data → BANK Sale → later MQTT response.
+     */
+    private void handleMqttInboundMessage(String topic, String rawMessage) {
+        if (!IntegrationModeStore.isCloud(this)) {
+            MqttLog.d("MQTT: Ignoring inbound — mode=" + IntegrationModeStore.get(this));
+            return;
+        }
+        try {
+            AppLogger.trxn_log(this, BankConstants.MQTT_INBOUND, rawMessage);
+            MqttLog.i("MQTT_INBOUND: " + rawMessage);
+
+            JSONObject root = new JSONObject(rawMessage);
+
+            // Optional device filter from pushTo.deviceId
+            JSONObject pushTo = root.optJSONObject("pushTo");
+            if (pushTo != null) {
+                String targetDeviceId = pushTo.optString("deviceId", "");
+                if (!targetDeviceId.isEmpty()
+                        && deviceSerialNumber != null
+                        && !targetDeviceId.equals(deviceSerialNumber)) {
+                    MqttLog.d("MQTT: Ignoring message for other deviceId=" + targetDeviceId);
+                    return;
+                }
+            }
+
+            String type = root.optString("type", root.optString("txnType", "")).trim();
+            String requestId = root.optString("request_id",
+                    root.optString("externalRefNumber", "")).trim();
+            // MQTT amount comes as paise-style (send 1 -> get 100). Convert /100 for bank.
+            String amountRaw = root.has("amount") ? String.valueOf(root.opt("amount")) : "";
+            String amountForBank = convertMqttAmountForBank(amountRaw);
+            String phone = root.optString("phone",
+                    root.optString("customerMobileNumber", "")).trim();
+            String terminalId = root.optString("terminalid",
+                    root.optString("terminalId", "")).trim();
+
+            JSONObject normalized = new JSONObject();
+            normalized.put("type", type);
+            normalized.put("request_id", requestId);
+            normalized.put("amount_raw", amountRaw);
+            normalized.put("amount", amountForBank);
+            normalized.put("phone", phone);
+            normalized.put("terminalid", terminalId);
+
+            Toast.makeText(this, "MQTT data received", Toast.LENGTH_SHORT).show();
+            showMqttReceivedPopup(topic, normalized.toString(2));
+
+            if (!"card".equalsIgnoreCase(type)) {
+                MqttLog.d("MQTT: Ignoring non-card txn type=" + type);
+                return;
+            }
+            if (requestId.isEmpty() || amountForBank.isEmpty()) {
+                MqttLog.e("MQTT: Missing request_id or amount for card sale");
+                Toast.makeText(this, "MQTT card sale missing request_id/amount", Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (mqttTxnPending || bankLaunchPending) {
+                MqttLog.e("MQTT: Sale already in progress, ignoring new request");
+                Toast.makeText(this, "MQTT sale already in progress", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            MqttLog.i("MQTT: Amount " + amountRaw + " -> bank amount " + amountForBank);
+            startMqttCardSale(requestId, amountForBank, phone, terminalId);
+        } catch (Exception e) {
+            MqttLog.e("MQTT: Failed to handle inbound message", e);
+            Toast.makeText(this, "Invalid MQTT JSON", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * MQTT gives amount already ×100 (send 1 -> receive 100).
+     * Divide by 100 before bank call so bank gets 1.
+     */
+    private String convertMqttAmountForBank(String amountRaw) {
+        if (amountRaw == null || amountRaw.trim().isEmpty()) {
+            return "";
+        }
+        try {
+            java.math.BigDecimal raw = new java.math.BigDecimal(amountRaw.trim());
+            java.math.BigDecimal bankAmount = raw
+                    .divide(new java.math.BigDecimal("100"), 0, java.math.RoundingMode.HALF_UP);
+            if (bankAmount.compareTo(java.math.BigDecimal.ZERO) <= 0) {
+                return "";
+            }
+            return bankAmount.toPlainString();
+        } catch (Exception e) {
+            MqttLog.e("MQTT: Invalid amount: " + amountRaw, e);
+            return "";
+        }
+    }
+
+    private void startMqttCardSale(String requestId, String amount, String phone, String terminalId) {
+        mqttTxnPending = true;
+        mqttRequestId = requestId;
+        mqttAmount = amount;
+        mqttPhone = phone;
+        mqttTerminalId = terminalId;
+        mqttReplyTopic = "mqtt/" + deviceSerialNumber + "/response";
+
+        tranType = TxnConstants.SALE;
+        topupAmount = parseAmountSafe(amount);
+        OPERATOR_ORDER_ID = requestId;
+        SOURCE_TXN_ID = requestId;
+        UDF1 = phone;
+        UDF2 = terminalId;
+        UDF3 = deviceSerialNumber;
+
+        try {
+            clearPaymentEnquiryTimers();
+            awaitingEnquiryAfterPaymentTimeout = false;
+            hardAbortSentToTvm = false;
+
+            Intent bankIntent = abpBank.createBankAppIntent(
+                    TxnConstants.SALE,
+                    amount,
+                    SOURCE_TXN_ID,
+                    "",
+                    OPERATOR_ORDER_ID,
+                    "NA",
+                    "NA",
+                    "0",
+                    "0",
+                    "NA",
+                    "NA",
+                    "NA",
+                    "NA",
+                    UDF1,
+                    UDF2,
+                    UDF3,
+                    "",
+                    ""
+            );
+
+            if (bankIntent == null) {
+                MqttLog.e("MQTT: Bank Intent NULL for card sale");
+                AppLogger.trxn_log(this, StatusConstants.ERR_BANK_INTENT_NULL_LOG,
+                        "MQTT Bank Intent NULL for request_id=" + requestId);
+                publishMqttSaleResult(false, "Bank Intent NULL", null);
+                return;
+            }
+
+            MqttLog.i("MQTT: Launching BANK Sale request_id=" + requestId + " amount=" + amount);
+            startPayment(bankIntent);
+        } catch (Exception e) {
+            MqttLog.e("MQTT: Failed to start card sale", e);
+            publishMqttSaleResult(false, e.getMessage(), null);
+        }
+    }
+
+    private long parseAmountSafe(String amount) {
+        try {
+            if (amount == null || amount.trim().isEmpty()) {
+                return 0L;
+            }
+            return new java.math.BigDecimal(amount.trim())
+                    .setScale(0, java.math.RoundingMode.HALF_UP)
+                    .longValue();
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    private void publishMqttSaleResult(boolean success, String message, Intent bankData) {
+        try {
+            JSONObject response = new JSONObject();
+            response.put("request_id", mqttRequestId);
+            response.put("amount", mqttAmount);
+            response.put("phone", mqttPhone);
+            response.put("terminalid", mqttTerminalId);
+            response.put("status", success ? "SUCCESS" : "FAILED");
+            response.put("message", message == null ? "" : message);
+            response.put("device_serial", deviceSerialNumber);
+
+            if (bankData != null && bankData.getExtras() != null) {
+                String result = bankData.getExtras().getString(JsonKeys.RESULT);
+                if (result != null) {
+                    String clean = result
+                            .replace(BankConstants.STX, "")
+                            .replace(BankConstants.ETX, "")
+                            .trim();
+                    try {
+                        response.put("bank_result", new JSONObject(clean));
+                    } catch (Exception ignore) {
+                        response.put("bank_result_raw", clean);
+                    }
+                }
+            }
+
+            String payload = response.toString();
+            AppLogger.trxn_log(this, BankConstants.MQTT_OUTBOUND, payload);
+            MqttLog.i("MQTT_OUTBOUND: " + payload);
+
+            if (mqttManager != null && mqttManager.isConnected()) {
+                boolean published = mqttManager.publish(mqttReplyTopic, payload);
+                MqttLog.i("MQTT: Published sale response to " + mqttReplyTopic + " ok=" + published);
+                Toast.makeText(this,
+                        published ? "MQTT response published" : "MQTT publish failed",
+                        Toast.LENGTH_SHORT).show();
+            } else {
+                MqttLog.e("MQTT: Cannot publish response, client not connected");
+            }
+        } catch (Exception e) {
+            MqttLog.e("MQTT: Failed to publish sale response", e);
+        } finally {
+            mqttTxnPending = false;
+        }
+    }
+
+    private void maybePublishMqttBankResult(boolean success, Intent bankData, String fallbackMessage) {
+        if (!IntegrationModeStore.isCloud(this) || !mqttTxnPending) {
+            return;
+        }
+        String msg = fallbackMessage;
+        if (bankData != null && bankData.getExtras() != null) {
+            try {
+                String result = bankData.getExtras().getString(JsonKeys.RESULT);
+                if (result != null) {
+                    String clean = result
+                            .replace(BankConstants.STX, "")
+                            .replace(BankConstants.ETX, "")
+                            .trim();
+                    JSONObject root = new JSONObject(clean);
+                    msg = root.optString(JsonKeys.STATUS_MSG, fallbackMessage);
+                    String statusCode = root.optString(JsonKeys.STATUS_CODE, "");
+                    if (!StatusConstants.STATUS_OK.equals(statusCode)) {
+                        success = false;
+                    }
+                }
+            } catch (Exception ignore) {
+                // keep fallback
+            }
+        }
+        publishMqttSaleResult(success, msg, bankData);
+    }
+
+    private void showMqttReceivedPopup(String topic, String message) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
+        if (mqttMessageDialog != null && mqttMessageDialog.isShowing()) {
+            mqttMessageDialog.dismiss();
+        }
+
+        String displayData = message == null || message.trim().isEmpty()
+                ? "(empty message)"
+                : message;
+
+        mqttMessageDialog = new AlertDialog.Builder(this)
+                .setTitle("MQTT Card Request")
+                .setMessage("Topic:\n" + topic + "\n\nNormalized Data:\n" + displayData)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> dialog.dismiss())
+                .setCancelable(true)
+                .create();
+        mqttMessageDialog.show();
     }
 
     private String timeStamp() {
@@ -1303,16 +1794,13 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
-            if (uartManager.uartComm != null) {
-                uartManager.uartComm.connect();
-                IntentFilter filter = new IntentFilter();
-                filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
-                filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+            filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+            registerReceiver(usbReceiver, filter);
 
-                registerReceiver(usbReceiver, filter);
-                // uartManager.sendSerialNumberResponse(serialNumber);
-            } else {
-                Log.e("UART", "uartComm is NULL — initUart() failed");
+            if (IntegrationModeStore.isUsb(this) && uartManager != null) {
+                uartManager.connect();
             }
         } catch (Exception e) {
             Log.e("UART", "UART open/send error", e);

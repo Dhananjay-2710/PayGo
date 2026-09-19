@@ -4,6 +4,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
+import com.cam.paygo.bank.handler.BQRANYRECEIPTHandler;
+import com.cam.paygo.bank.handler.QRHandler;
 import com.cam.paygo.constants.StatusConstants;
 import com.cam.paygo.constants.TxnConstants;
 import com.cam.paygo.manager.UartManager;
@@ -51,6 +53,8 @@ public class BankResponseProcessor {
         handlerMap.put(TxnConstants.TRANSACTION_ENQUIRY, new TransactionEnquiryHandler(uartManager));
         handlerMap.put(TxnConstants.REFUND, new RefundHandler(uartManager));
         handlerMap.put(TxnConstants.ANY_RECEIPT, new AnyReceiptHandler(uartManager));
+        handlerMap.put(TxnConstants.QR, new QRHandler(uartManager));
+        handlerMap.put(TxnConstants.BQRANYRECEIPT, new BQRANYRECEIPTHandler(uartManager));
     }
 
     public void process(Intent data) {

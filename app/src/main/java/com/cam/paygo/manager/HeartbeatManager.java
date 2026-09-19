@@ -32,6 +32,11 @@ public class HeartbeatManager {
     private int interval = 30_000;
     private boolean isRunning = false;
     private final HeartbeatRepository repository;
+    private IntegrationTypeListener integrationTypeListener;
+
+    public interface IntegrationTypeListener {
+        void onIntegrationType(String integrationType);
+    }
 
     private HeartbeatManager() {
         handler = new Handler(Looper.getMainLooper());
@@ -45,8 +50,14 @@ public class HeartbeatManager {
         return instance;
     }
 
-    // 🔥 Start Heartbeat Loop
-    public void start(String token, Context ctx) {
+    public void setIntegrationTypeListener(IntegrationTypeListener listener) {
+        this.integrationTypeListener = listener;
+    }
+
+    /** Start heartbeat using the latest token from {@link AuthManager}. */
+    public void start(Context ctx) {
+        AuthManager.init(ctx);
+
         if (isRunning && runnable != null) {
             handler.removeCallbacks(runnable);
         }
@@ -54,12 +65,12 @@ public class HeartbeatManager {
         isRunning = true;
         interval = 30_000;
 
+        final Context appCtx = ctx.getApplicationContext();
+
         runnable = new Runnable() {
             @Override
             public void run() {
-
-                callHeartbeat(token, ctx);
-
+                callHeartbeat(appCtx);
                 handler.postDelayed(this, interval);
             }
         };
@@ -67,7 +78,12 @@ public class HeartbeatManager {
         handler.post(runnable);
     }
 
-    // 🔥 Stop Heartbeat
+    /** @deprecated Use {@link #start(Context)} so refreshed tokens are picked up. */
+    @Deprecated
+    public void start(String token, Context ctx) {
+        start(ctx);
+    }
+
     public void stop() {
         isRunning = false;
 
@@ -76,8 +92,13 @@ public class HeartbeatManager {
         }
     }
 
-    // 🔥 API Call
-    private void callHeartbeat(String token, Context context) {
+    private void callHeartbeat(Context context) {
+        String token = AuthManager.getToken(context);
+        if (token == null || token.isEmpty()) {
+            Log.w(TAG, "No auth token; skipping heartbeat");
+            handleFailure();
+            return;
+        }
 
         HeartbeatRequest request = new HeartbeatRequest(getDeviceSerialNumber());
 
@@ -94,13 +115,20 @@ public class HeartbeatManager {
                 }
 
                 if (response.isSuccessful() && body != null && body.getData() != null) {
-
                     int intervalSec = body.getData().getHeartbeatIntervalSec();
-
                     interval = intervalSec * 1000;
-
                     Log.d(AppConstants.HEARTBEAT, "Next interval: " + interval);
 
+                    String integrationType = body.getData().getIntegrationType();
+                    if (integrationType != null && !integrationType.trim().isEmpty()
+                            && integrationTypeListener != null) {
+                        Log.i(TAG, "Heartbeat integration_type=" + integrationType);
+                        integrationTypeListener.onIntegrationType(integrationType);
+                    }
+                } else if (response.code() == 401) {
+                    AppLogger.api_log(context, AppConstants.HEARTBEAT_ERROR, "Unauthorized after refresh attempt");
+                    AuthManager.invalidateSession(context);
+                    handleFailure();
                 } else {
                     handleFailure();
                 }
@@ -112,10 +140,8 @@ public class HeartbeatManager {
                 Log.e(AppConstants.HEARTBEAT_ERROR, String.valueOf(t.getMessage()), t);
 
                 if (t instanceof IOException) {
-                    // Internet issue
                     AppLogger.api_log(context, AppConstants.HEARTBEAT_ERROR, "No Internet / Network Failure");
                 } else {
-                    // Other issue
                     AppLogger.api_log(context, AppConstants.HEARTBEAT_ERROR, "Unknown Error : " + t.getMessage());
                 }
 
@@ -126,7 +152,7 @@ public class HeartbeatManager {
 
     private void handleFailure() {
         if (interval <= 0) {
-            interval = 10000; // default 10 sec
+            interval = 10000;
         } else {
             interval = Math.min(interval * 2, 300000);
         }
