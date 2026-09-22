@@ -10,4 +10,12 @@ public final class MqttConstants {
 
     public static final String USERNAME = "username";
     public static final String PASSWORD = "password";
+
+    /** Device reply topic: mqtt/{deviceSerial}/response */
+    public static String replyTopic(String deviceSerial) {
+        String serial = deviceSerial == null || deviceSerial.trim().isEmpty()
+                ? "unknown"
+                : deviceSerial.trim();
+        return "mqtt/" + serial + "/response";
+    }
 }

@@ -44,5 +44,12 @@
                 <action android:name="android.hardware.usb.action.USB_STATE" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".qr.QrPaymentActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.PAX_FINAL" />
     </application>
 </manifest>

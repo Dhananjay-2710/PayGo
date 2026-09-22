@@ -29,7 +29,7 @@ public final class AppConstants {
     public static final String HEARTBEAT = "HEARTBEAT";
     public static final String HEARTBEAT_ERROR = "HEARTBEAT_ERROR";
 
-    public static final String RELEASE_DATE = "18/09/2026";
+    public static final String RELEASE_DATE = "22/09/2026";
 
     public static final String TXN_ENV_PROD = "debug";
     public static final String UNKNOWN_COMMUTER = "Unknown Commuter";

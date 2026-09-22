@@ -36,4 +36,20 @@
     <string name="back">Back</string>
     <string name="internet_not_available">Internet is not available</string>
     <string name="internet_connected">Internet connected</string>
+    <string name="qr_scan_to_pay">Scan QR to Pay</string>
+    <string name="qr_scan_hint">Use your UPI app to complete payment</string>
+    <string name="qr_expires_in">QR expires in</string>
+    <string name="qr_close">Close</string>
+    <string name="qr_code_content_description">Payment QR code</string>
+    <string name="qr_expired">QR expired</string>
+    <string name="qr_generate_failed">Failed to generate QR</string>
+    <string name="qr_missing_data">Missing QR data</string>
+    <string name="qr_amount_format">₹%1$s</string>
+    <string name="qr_request_format">%1$s</string>
+    <string name="qr_order_sn_format">order_sn: %1$s</string>
+    <string name="qr_payment_success">Payment Successful</string>
+    <string name="qr_payment_failed">Payment Failed</string>
+    <string name="qr_payment_success_hint">Thank you…</string>
+    <string name="qr_payment_failed_hint">No payment received. Closing QR…</string>
+    <string name="qr_payment_timeout_failed">Payment failed</string>
 </resources>

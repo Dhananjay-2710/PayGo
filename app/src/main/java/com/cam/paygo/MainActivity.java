@@ -68,13 +68,16 @@ import com.cam.paygo.constants.AppConstants;
 import com.cam.paygo.constants.BankConstants;
 import com.cam.paygo.constants.IntegrationConstants;
 import com.cam.paygo.constants.JsonKeys;
-import com.cam.paygo.constants.MqttConstants;
+import com.cam.paygo.constants.QrTypeConstants;
 import com.cam.paygo.constants.StatusConstants;
 import com.cam.paygo.constants.TxnConstants;
 import com.cam.paygo.manager.AuthManager;
 import com.cam.paygo.manager.HeartbeatManager;
 import com.cam.paygo.manager.IntegrationModeStore;
+import com.cam.paygo.manager.MqttPaymentManager;
+import com.cam.paygo.manager.QrTypeStore;
 import com.cam.paygo.manager.UartManager;
+import com.cam.paygo.qr.QrPaymentActivity;
 import com.cam.paygo.model.request.DeviceRequest;
 import com.cam.paygo.model.request.LoginRequest;
 import com.cam.paygo.model.response.DeviceResponse;
@@ -91,7 +94,6 @@ import com.pax.neptunelite.api.NeptuneLiteUser;
 import org.json.JSONObject;
 
 import com.cam.mqtt.MqttLog;
-import com.cam.mqtt.MqttManager;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -158,15 +160,8 @@ public class MainActivity extends AppCompatActivity {
     private final Runnable authRetryRunnable = this::initAuthFlow;
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
-    private MqttManager mqttManager;
+    private MqttPaymentManager mqttPaymentManager;
     private AlertDialog mqttMessageDialog;
-    /** True when the active bank sale was started from an MQTT card request. */
-    private boolean mqttTxnPending = false;
-    private String mqttRequestId = "";
-    private String mqttReplyTopic = "";
-    private String mqttAmount = "";
-    private String mqttPhone = "";
-    private String mqttTerminalId = "";
 
     private FlowState flowState = FlowState.IDLE;
     /** True from paymentLauncher.launch until ActivityResult returns — blocks a second bank Intent. */
@@ -198,6 +193,7 @@ public class MainActivity extends AppCompatActivity {
 
         context = this;
         connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        initMqttPaymentManager();
         networkCallback = new ConnectivityManager.NetworkCallback() {
             @Override
             public void onAvailable(@NonNull Network network) {
@@ -433,64 +429,89 @@ public class MainActivity extends AppCompatActivity {
                             myCardDetector.startPolling(data, dbTxnId);
                         }
                     });
+                } else if (Objects.equals(tranType, TxnConstants.TRANSACTION_ENQUIRY)) {
+                    // TVM-initiated enquiry must launch bank on UI thread with ENQUIRY flow
+                    // (not PAYMENT + 65s then another enquiry).
+                    runOnUiThread(() -> launchTxnEnquiryFromHost(
+                            OPERATOR_ORDER_ID, UDF1, UDF2, UDF3, UDF4, UDF5));
                 } else {
-                    Intent bankIntent = null;
-                    try {
-                        Log.d(TAG, "Start Create Intent");
-                        bankIntent = abpBank.createBankAppIntent(
-                                tranType,
-                                String.valueOf(topupAmount),
-                                SOURCE_TXN_ID,
-                                dbTxnId,
-                                OPERATOR_ORDER_ID,
-                                INVOICE_NO,
-                                RRN,
-                                IS_OFFLINE,
-                                PRINT_FLAG,
-                                SHIFT_NO,
-                                STATION_NAME,
-                                STATION_ID,
-                                GATENO,
-                                UDF1,
-                                UDF2,
-                                UDF3,
-                                UDF4,
-                                UDF5
-                        );
+                    // UART listener thread — ActivityResultLauncher must run on main thread.
+                    final String launchTranType = tranType;
+                    final String launchAmount = String.valueOf(topupAmount);
+                    final String launchSourceTxnId = SOURCE_TXN_ID;
+                    final String launchOperatorOrderId = OPERATOR_ORDER_ID;
+                    final String launchInvoiceNo = INVOICE_NO;
+                    final String launchRrn = RRN;
+                    final String launchIsOffline = IS_OFFLINE;
+                    final String launchPrintFlag = PRINT_FLAG;
+                    final String launchShiftNo = SHIFT_NO;
+                    final String launchStationName = STATION_NAME;
+                    final String launchStationId = STATION_ID;
+                    final String launchGateNo = GATENO;
+                    final String launchUdf1 = UDF1;
+                    final String launchUdf2 = UDF2;
+                    final String launchUdf3 = UDF3;
+                    final String launchUdf4 = UDF4;
+                    final String launchUdf5 = UDF5;
+                    final String launchDbTxnId = dbTxnId;
 
-                        Log.d(TAG, "Bank Intent : " + bankIntent);
-                        if (bankIntent == null) {
-                            Log.e(TAG, "Bank Intent is NULL, Unable to initiate payment. Please try again.");
-                            AppLogger.trxn_log(context, StatusConstants.ERR_BANK_INTENT_NULL_LOG, "Bank Intent NULL, Bank app launch failed. TRAN_TYPE or some other required parameter is null");
+                    runOnUiThread(() -> {
+                        Intent bankIntent = null;
+                        try {
+                            Log.d(TAG, "Start Create Intent");
+                            bankIntent = abpBank.createBankAppIntent(
+                                    launchTranType,
+                                    launchAmount,
+                                    launchSourceTxnId,
+                                    launchDbTxnId,
+                                    launchOperatorOrderId,
+                                    launchInvoiceNo,
+                                    launchRrn,
+                                    launchIsOffline,
+                                    launchPrintFlag,
+                                    launchShiftNo,
+                                    launchStationName,
+                                    launchStationId,
+                                    launchGateNo,
+                                    launchUdf1,
+                                    launchUdf2,
+                                    launchUdf3,
+                                    launchUdf4,
+                                    launchUdf5
+                            );
+
+                            Log.d(TAG, "Bank Intent : " + bankIntent);
+                            if (bankIntent == null) {
+                                Log.e(TAG, "Bank Intent is NULL, Unable to initiate payment. Please try again.");
+                                AppLogger.trxn_log(context, StatusConstants.ERR_BANK_INTENT_NULL_LOG, "Bank Intent NULL, Bank app launch failed. TRAN_TYPE or some other required parameter is null");
+                                uartManager.sendErrorResponse(
+                                        launchTranType,
+                                        StatusConstants.ERR_BANK_INTENT_NULL_CODE,
+                                        "Bank Intent NULL, Bank app launch failed. TRAN_TYPE or some other required parameter is null",
+                                        launchOperatorOrderId,
+                                        ""
+                                );
+                                return;
+                            }
+                            Log.d(TAG, "Intent Created, Bank Intent is NOT NULL");
+                            Log.d(TAG, "Launching Bank App...");
+                            startPayment(bankIntent);
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error while creating or launching bank intent", e);
+                            AppLogger.trxn_log(context, StatusConstants.ERR_BANK_LAUNCH_FAILED_LOG, "Bank app launch failed. Something went wrong. " + e.getMessage());
                             uartManager.sendErrorResponse(
-                                    tranType,
-                                    StatusConstants.ERR_BANK_INTENT_NULL_CODE,
-                                    "Bank Intent NULL, Bank app launch failed. TRAN_TYPE or some other required parameter is null",
-                                    OPERATOR_ORDER_ID,
+                                    launchTranType,
+                                    StatusConstants.ERR_BANK_LAUNCH_FAILED_CODE,
+                                    "Bank app launch failed. Something went wrong. " + e.getMessage(),
+                                    launchOperatorOrderId,
                                     ""
                             );
-                            return;
-                        } else {
-                            Log.d(TAG, "Intent Created, Bank Intent is NOT NULL");
                         }
-                        Log.d(TAG, "Launching Bank App...");
-                        startPayment(bankIntent);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error while creating or launching bank intent", e);
-                        AppLogger.trxn_log(context, StatusConstants.ERR_BANK_LAUNCH_FAILED_LOG, "Bank app launch failed. Something went wrong. " + e.getMessage());
-                        uartManager.sendErrorResponse(
-                                tranType,
-                                StatusConstants.ERR_BANK_LAUNCH_FAILED_CODE,
-                                "Bank app launch failed. Something went wrong. " + e.getMessage(),
-                                OPERATOR_ORDER_ID,
-                                ""
-                        );
-                    }
+                    });
                 }
             } catch (Exception e) {
                 Log.d(TAG, Objects.requireNonNull(e.getMessage()));
             }
-
         });
 
         // Bank Response Processor (UART replies are no-ops when mode=CLOUD)
@@ -508,6 +529,9 @@ public class MainActivity extends AppCompatActivity {
         });
         HeartbeatManager.getInstance().setIntegrationTypeListener(type ->
                 runOnUiThread(() -> applyIntegrationMode(type, true)));
+        HeartbeatManager.getInstance().setQrTypeListener(type ->
+                runOnUiThread(() -> applyQrType(type, true)));
+        applyQrType(QrTypeStore.get(this), false);
         initAuthFlow();
 
         // Periodic Upload Worker
@@ -630,26 +654,71 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        long enquiryWaitMs = remainingPaxDeadlineMs();
+        // After a prior payment: cap by remaining PAX deadline.
+        // Fresh host enquiry (or paymentStartedAtMs unset): use full ENQUIRY_TIMEOUT.
+        long enquiryWaitMs = (paymentStartedAtMs <= 0L)
+                ? ENQUIRY_TIMEOUT
+                : remainingPaxDeadlineMs();
         if (enquiryWaitMs <= 0) {
             Log.w(TAG, "No time left before 70s PAX deadline — skip TRANSACTION_ENQUIRY, notify TVM");
             finishFlowWithApbTimeout();
             return;
         }
 
+        launchTxnEnquiryInternal(enquiryWaitMs, OPERATOR_ORDER_ID, UDF1, UDF2, UDF3, UDF4, UDF5);
+    }
+
+    /**
+     * TVM/host sent TRANSACTION_ENQUIRY directly — launch bank APP_TO_APP enquiry now.
+     * Must be called on the main thread.
+     */
+    private void launchTxnEnquiryFromHost(
+            String operatorOrderId,
+            String udf1,
+            String udf2,
+            String udf3,
+            String udf4,
+            String udf5
+    ) {
+        Log.d(TAG, "UART/host TRANSACTION_ENQUIRY → launch bank, OPERATOR_ORDER_ID=" + operatorOrderId);
+        if (bankLaunchPending) {
+            Log.w(TAG, "Ignoring host TRANSACTION_ENQUIRY — bank ActivityResult still pending");
+            AppLogger.trxn_log(context, StatusConstants.ERR_BANK_LAUNCH_FAILED_LOG,
+                    "Ignored TRANSACTION_ENQUIRY while previous bank request still pending");
+            uartManager.sendErrorResponse(
+                    TxnConstants.TRANSACTION_ENQUIRY,
+                    StatusConstants.ERR_BANK_LAUNCH_FAILED_CODE,
+                    "Previous bank request still in progress. Please retry.",
+                    operatorOrderId,
+                    ""
+            );
+            return;
+        }
+        paymentStartedAtMs = SystemClock.elapsedRealtime();
+        launchTxnEnquiryInternal(ENQUIRY_TIMEOUT, operatorOrderId, udf1, udf2, udf3, udf4, udf5);
+    }
+
+    private void launchTxnEnquiryInternal(
+            long enquiryWaitMs,
+            String operatorOrderId,
+            String udf1,
+            String udf2,
+            String udf3,
+            String udf4,
+            String udf5
+    ) {
         flowState = FlowState.ENQUIRY;
         awaitingEnquiryAfterPaymentTimeout = false;
         if (enquiryTimeoutRunnable != null) {
             handler.removeCallbacks(enquiryTimeoutRunnable);
         }
 
-        Log.d(TAG, "Enquiry started, OPERATOR_ORDER_ID=" + OPERATOR_ORDER_ID
+        Log.d(TAG, "Enquiry started, OPERATOR_ORDER_ID=" + operatorOrderId
                 + ", timeout=" + enquiryWaitMs + " ms (" + (enquiryWaitMs / 1000) + " sec)");
         enquiryTimeoutRunnable = () -> {
             if (flowState != FlowState.ENQUIRY) return;
             Log.e(TAG, "ENQUIRY TIMEOUT exceeded, sending APB timeout to TVM");
             AppLogger.trxn_log(context, StatusConstants.ERR_TXN_ENQUIRY_REQUEST_TIMEOUT_LOG, "Request Timeout");
-            // Do not clear bankLaunchPending here — ActivityResult may still arrive; keep blocking a second launch.
             hardAbortSentToTvm = true;
             flowState = FlowState.IDLE;
             sendApbTimeoutToTVM();
@@ -660,37 +729,40 @@ public class MainActivity extends AppCompatActivity {
         try {
             Intent bankIntent = abpBank.createBankAppIntent(
                     TxnConstants.TRANSACTION_ENQUIRY,
-                    "", "", "", OPERATOR_ORDER_ID,
+                    "", "", "", operatorOrderId,
                     "", "", "", "", "", "", "", "",
-                    UDF1, UDF2, UDF3, UDF4, UDF5
+                    udf1, udf2, udf3, udf4, udf5
             );
 
             if (bankIntent == null) {
                 handler.removeCallbacks(enquiryTimeoutRunnable);
                 bankLaunchPending = false;
                 flowState = FlowState.IDLE;
+                Log.e(TAG, "TRANSACTION_ENQUIRY Bank Intent NULL — cannot launch bank app");
                 AppLogger.trxn_log(context, StatusConstants.ERR_BANK_INTENT_NULL_LOG, "Bank Intent NULL, Bank app launch failed. TRAN_TYPE or some other required parameter is null");
                 uartManager.sendErrorResponse(
-                        tranType, StatusConstants.ERR_BANK_INTENT_NULL_CODE, "Bank Intent NULL, Bank app launch failed. TRAN_TYPE or some other required parameter is null",
-                        OPERATOR_ORDER_ID, ""
+                        TxnConstants.TRANSACTION_ENQUIRY, StatusConstants.ERR_BANK_INTENT_NULL_CODE,
+                        "Bank Intent NULL, Bank app launch failed. TRAN_TYPE or some other required parameter is null",
+                        operatorOrderId, ""
                 );
                 return;
             }
 
+            Log.d(TAG, "Launching BANK TRANSACTION_ENQUIRY APP_TO_APP, OPERATOR_ORDER_ID=" + operatorOrderId);
             bankLaunchPending = true;
             paymentLauncher.launch(bankIntent);
 
         } catch (Exception e) {
-
             handler.removeCallbacks(enquiryTimeoutRunnable);
             bankLaunchPending = false;
             flowState = FlowState.IDLE;
+            Log.e(TAG, "TRANSACTION_ENQUIRY bank launch failed", e);
             AppLogger.trxn_log(context, StatusConstants.ERR_BANK_LAUNCH_FAILED_LOG, "Bank app launch failed. Something went wrong. " + e.getMessage());
             uartManager.sendErrorResponse(
-                    tranType,
+                    TxnConstants.TRANSACTION_ENQUIRY,
                     StatusConstants.ERR_BANK_LAUNCH_FAILED_CODE,
                     "Bank app launch failed. Something went wrong. " + e.getMessage(),
-                    OPERATOR_ORDER_ID,
+                    operatorOrderId,
                     ""
             );
         }
@@ -1157,7 +1229,9 @@ public class MainActivity extends AppCompatActivity {
                                 Log.w(TAG, "RESULT_OK received without RESPONSE_TYPE; processing anyway");
                             }
                             bankResponseProcessor.process(result.getData());
-                            maybePublishMqttBankResult(true, result.getData(), "Sale completed");
+                            if (mqttPaymentManager != null) {
+                                mqttPaymentManager.publishBankResult(true, result.getData(), "Sale completed");
+                            }
                             return;
                         }
 
@@ -1169,7 +1243,9 @@ public class MainActivity extends AppCompatActivity {
                                 awaitingEnquiryAfterPaymentTimeout = false;
                                 flowState = FlowState.IDLE;
                                 sendApbTimeoutToTVM();
-                                maybePublishMqttBankResult(false, result.getData(), "Bank declined / cancelled");
+                                if (mqttPaymentManager != null) {
+                                    mqttPaymentManager.publishBankResult(false, result.getData(), "Bank declined / cancelled");
+                                }
                                 return;
                             }
 
@@ -1180,7 +1256,9 @@ public class MainActivity extends AppCompatActivity {
                                     : " — starting TRANSACTION_ENQUIRY"));
                             awaitingEnquiryAfterPaymentTimeout = false;
                             // For MQTT card sale, publish failure now (enquiry still runs for UART path).
-                            maybePublishMqttBankResult(false, result.getData(), "Bank non-OK during payment");
+                            if (mqttPaymentManager != null) {
+                                mqttPaymentManager.publishBankResult(false, result.getData(), "Bank non-OK during payment");
+                            }
                             startTxnEnquiry();
                             return;
                         }
@@ -1376,13 +1454,70 @@ public class MainActivity extends AppCompatActivity {
         if (mqttMessageDialog != null && mqttMessageDialog.isShowing()) {
             mqttMessageDialog.dismiss();
         }
-        if (mqttManager != null) {
-            mqttManager.disconnect();
+        if (mqttPaymentManager != null) {
+            mqttPaymentManager.setListener(null);
+            mqttPaymentManager.stop();
         }
     }
 
-    private String getMqttBrokerUrl() {
-        return MqttConstants.BROKER_URL;
+    private void initMqttPaymentManager() {
+        mqttPaymentManager = new MqttPaymentManager(this, () -> deviceSerialNumber);
+        mqttPaymentManager.setListener(new MqttPaymentManager.Listener() {
+            @Override
+            public void onCardSaleRequested(String requestId, String amount, String phone, String terminalId) {
+                startMqttCardSale(requestId, amount, phone, terminalId);
+            }
+
+            @Override
+            public void onAirtelQrRequested(String requestId, String amount) {
+                startMqttAirtelQr(requestId, amount);
+            }
+
+            @Override
+            public void onAnyQrDisplay(String requestId, String amount, String orderSn, String datetime, String ctime) {
+                Intent qrIntent = QrPaymentActivity.createIntent(
+                        MainActivity.this, orderSn, amount, requestId, datetime, ctime);
+                startActivity(qrIntent);
+                MqttLog.i("MQTT: launched QrPaymentActivity for order_sn=" + orderSn);
+            }
+
+            @Override
+            public void onQrPaymentSuccess(String requestId, String amount) {
+                if (!QrPaymentActivity.isVisible()) {
+                    MqttLog.d("MQTT: QR success received but QrPaymentActivity not visible");
+                    Toast.makeText(MainActivity.this, R.string.qr_payment_success, Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                startActivity(QrPaymentActivity.createResultIntent(
+                        MainActivity.this,
+                        QrPaymentActivity.RESULT_SUCCESS,
+                        requestId,
+                        amount));
+                MqttLog.i("MQTT: notified QrPaymentActivity of SUCCESS");
+            }
+
+            @Override
+            public void onMqttStatusToast(String message) {
+                if (!isFinishing() && !isDestroyed()) {
+                    Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+                }
+            }
+
+            @Override
+            public void onMqttDebugPopup(String title, String topic, String body) {
+                showMqttReceivedPopup(title, topic, body);
+            }
+
+            @Override
+            public boolean isBankBusy() {
+                return bankLaunchPending;
+            }
+
+            @Override
+            public boolean isAnyQrScreenVisible() {
+                return QrPaymentActivity.isVisible();
+            }
+        });
     }
 
     /**
@@ -1403,12 +1538,26 @@ public class MainActivity extends AppCompatActivity {
 
         if (IntegrationConstants.CLOUD.equals(next)) {
             stopUartChannel();
-            startMqttChannel();
+            if (mqttPaymentManager != null) {
+                mqttPaymentManager.start();
+            }
         } else {
-            mqttTxnPending = false;
-            stopMqttChannel();
+            if (mqttPaymentManager != null) {
+                mqttPaymentManager.stop();
+            }
             startUartChannel();
         }
+    }
+
+    private void applyQrType(String type, boolean fromServer) {
+        String next = QrTypeConstants.orDefault(type);
+        String prev = QrTypeStore.get(this);
+        if (fromServer && prev.equals(next)) {
+            Log.d(TAG, "qr_type unchanged=" + next);
+            return;
+        }
+        QrTypeStore.set(this, next);
+        Log.i(TAG, "APPLY qr_type=" + next + " previous=" + prev + " fromServer=" + fromServer);
     }
 
     private void startUartChannel() {
@@ -1430,195 +1579,69 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void startMqttChannel() {
-        if (mqttManager != null && mqttManager.isConnected()) {
-            Log.i(TAG, "MQTT already connected");
-            return;
+    private void startMqttAirtelQr(String requestId, String amount) {
+        if (mqttPaymentManager != null) {
+            mqttPaymentManager.beginPendingTxn(requestId, amount, "", "");
         }
-        initMqttConnection();
-        Log.i(TAG, "MQTT channel starting");
-    }
 
-    private void stopMqttChannel() {
+        tranType = TxnConstants.QR;
+        topupAmount = parseAmountSafe(amount);
+        OPERATOR_ORDER_ID = requestId;
+        SOURCE_TXN_ID = requestId;
+        UDF1 = "";
+        UDF2 = "";
+        UDF3 = deviceSerialNumber;
+
         try {
-            if (mqttManager != null) {
-                mqttManager.disconnect();
-                Log.i(TAG, "MQTT channel stopped");
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "MQTT stop error: " + e.getMessage());
-        }
-    }
+            clearPaymentEnquiryTimers();
+            awaitingEnquiryAfterPaymentTimeout = false;
+            hardAbortSentToTvm = false;
 
-    /**
-     * Bootstraps MQTT using device serial as clientId.
-     * Ported from mqtt.MainFragment#initMqttConnection for PayGo MainActivity.
-     */
-    private void initMqttConnection() {
-        mqttManager = MqttManager.getInstance();
-        String clientId = deviceSerialNumber;
-        if (clientId == null || clientId.trim().isEmpty()) {
-            clientId = "PayGo_" + System.currentTimeMillis();
-        }
-
-        mqttManager.initialize(this, getMqttBrokerUrl(), clientId);
-        mqttManager.setMqttEventListener(new MqttManager.MqttEventListener() {
-            @Override
-            public void onConnected() {
-                MqttLog.d("MQTT: Connected successfully");
-                runOnUiThread(() -> Toast.makeText(
-                        MainActivity.this,
-                        "Connected with MQTT",
-                        Toast.LENGTH_SHORT
-                ).show());
-                mqttManager.startStatusUpdate();
-            }
-
-            @Override
-            public void onConnectionFailed(Throwable exception) {
-                MqttLog.e("MQTT: Connection failed", exception);
-                runOnUiThread(() -> Toast.makeText(
-                        MainActivity.this,
-                        "MQTT: Connection Failed",
-                        Toast.LENGTH_SHORT
-                ).show());
-            }
-
-            @Override
-            public void onConnectionLost(Throwable cause) {
-                MqttLog.e("MQTT: Connection lost", cause);
-                runOnUiThread(() -> Toast.makeText(
-                        MainActivity.this,
-                        "MQTT: Connection Lost",
-                        Toast.LENGTH_SHORT
-                ).show());
-            }
-
-            @Override
-            public void onSubscribed(String topic) {
-                MqttLog.i("MQTT: Subscriber is listening on: " + topic);
-                runOnUiThread(() -> Toast.makeText(
-                        MainActivity.this,
-                        "MQTT listening:\n" + topic,
-                        Toast.LENGTH_LONG
-                ).show());
-            }
-
-            @Override
-            public void onMessageReceived(String topic, String message) {
-                MqttLog.i("MQTT: Message received on topic [" + topic + "]: " + message);
-                runOnUiThread(() -> handleMqttInboundMessage(topic, message));
-            }
-        });
-
-        if (!mqttManager.isConnected()) {
-            mqttManager.connect(
-                    MqttConstants.USERNAME,
-                    MqttConstants.PASSWORD
+            Intent bankIntent = abpBank.createBankAppIntent(
+                    TxnConstants.QR,
+                    amount,
+                    SOURCE_TXN_ID,
+                    "",
+                    OPERATOR_ORDER_ID,
+                    "NA",
+                    "NA",
+                    "0",
+                    "0",
+                    "NA",
+                    "NA",
+                    "NA",
+                    "NA",
+                    UDF1,
+                    UDF2,
+                    UDF3,
+                    "",
+                    ""
             );
-        }
-    }
 
-    /**
-     * MQTT → normalize card request → show data → BANK Sale → later MQTT response.
-     */
-    private void handleMqttInboundMessage(String topic, String rawMessage) {
-        if (!IntegrationModeStore.isCloud(this)) {
-            MqttLog.d("MQTT: Ignoring inbound — mode=" + IntegrationModeStore.get(this));
-            return;
-        }
-        try {
-            AppLogger.trxn_log(this, BankConstants.MQTT_INBOUND, rawMessage);
-            MqttLog.i("MQTT_INBOUND: " + rawMessage);
-
-            JSONObject root = new JSONObject(rawMessage);
-
-            // Optional device filter from pushTo.deviceId
-            JSONObject pushTo = root.optJSONObject("pushTo");
-            if (pushTo != null) {
-                String targetDeviceId = pushTo.optString("deviceId", "");
-                if (!targetDeviceId.isEmpty()
-                        && deviceSerialNumber != null
-                        && !targetDeviceId.equals(deviceSerialNumber)) {
-                    MqttLog.d("MQTT: Ignoring message for other deviceId=" + targetDeviceId);
-                    return;
+            if (bankIntent == null) {
+                MqttLog.e("MQTT: Bank Intent NULL for AIRTEL QR");
+                AppLogger.trxn_log(this, StatusConstants.ERR_BANK_INTENT_NULL_LOG,
+                        "MQTT Bank Intent NULL for AIRTEL QR request_id=" + requestId);
+                if (mqttPaymentManager != null) {
+                    mqttPaymentManager.publishSaleResult(false, "Bank Intent NULL", null);
                 }
-            }
-
-            String type = root.optString("type", root.optString("txnType", "")).trim();
-            String requestId = root.optString("request_id",
-                    root.optString("externalRefNumber", "")).trim();
-            // MQTT amount comes as paise-style (send 1 -> get 100). Convert /100 for bank.
-            String amountRaw = root.has("amount") ? String.valueOf(root.opt("amount")) : "";
-            String amountForBank = convertMqttAmountForBank(amountRaw);
-            String phone = root.optString("phone",
-                    root.optString("customerMobileNumber", "")).trim();
-            String terminalId = root.optString("terminalid",
-                    root.optString("terminalId", "")).trim();
-
-            JSONObject normalized = new JSONObject();
-            normalized.put("type", type);
-            normalized.put("request_id", requestId);
-            normalized.put("amount_raw", amountRaw);
-            normalized.put("amount", amountForBank);
-            normalized.put("phone", phone);
-            normalized.put("terminalid", terminalId);
-
-            Toast.makeText(this, "MQTT data received", Toast.LENGTH_SHORT).show();
-            showMqttReceivedPopup(topic, normalized.toString(2));
-
-            if (!"card".equalsIgnoreCase(type)) {
-                MqttLog.d("MQTT: Ignoring non-card txn type=" + type);
-                return;
-            }
-            if (requestId.isEmpty() || amountForBank.isEmpty()) {
-                MqttLog.e("MQTT: Missing request_id or amount for card sale");
-                Toast.makeText(this, "MQTT card sale missing request_id/amount", Toast.LENGTH_LONG).show();
-                return;
-            }
-            if (mqttTxnPending || bankLaunchPending) {
-                MqttLog.e("MQTT: Sale already in progress, ignoring new request");
-                Toast.makeText(this, "MQTT sale already in progress", Toast.LENGTH_SHORT).show();
                 return;
             }
 
-            MqttLog.i("MQTT: Amount " + amountRaw + " -> bank amount " + amountForBank);
-            startMqttCardSale(requestId, amountForBank, phone, terminalId);
+            MqttLog.i("MQTT: Launching BANK QR (AIRTEL) request_id=" + requestId + " amount=" + amount);
+            startPayment(bankIntent);
         } catch (Exception e) {
-            MqttLog.e("MQTT: Failed to handle inbound message", e);
-            Toast.makeText(this, "Invalid MQTT JSON", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    /**
-     * MQTT gives amount already ×100 (send 1 -> receive 100).
-     * Divide by 100 before bank call so bank gets 1.
-     */
-    private String convertMqttAmountForBank(String amountRaw) {
-        if (amountRaw == null || amountRaw.trim().isEmpty()) {
-            return "";
-        }
-        try {
-            java.math.BigDecimal raw = new java.math.BigDecimal(amountRaw.trim());
-            java.math.BigDecimal bankAmount = raw
-                    .divide(new java.math.BigDecimal("100"), 0, java.math.RoundingMode.HALF_UP);
-            if (bankAmount.compareTo(java.math.BigDecimal.ZERO) <= 0) {
-                return "";
+            MqttLog.e("MQTT: Failed to start AIRTEL QR", e);
+            if (mqttPaymentManager != null) {
+                mqttPaymentManager.publishSaleResult(false, e.getMessage(), null);
             }
-            return bankAmount.toPlainString();
-        } catch (Exception e) {
-            MqttLog.e("MQTT: Invalid amount: " + amountRaw, e);
-            return "";
         }
     }
 
     private void startMqttCardSale(String requestId, String amount, String phone, String terminalId) {
-        mqttTxnPending = true;
-        mqttRequestId = requestId;
-        mqttAmount = amount;
-        mqttPhone = phone;
-        mqttTerminalId = terminalId;
-        mqttReplyTopic = "mqtt/" + deviceSerialNumber + "/response";
+        if (mqttPaymentManager != null) {
+            mqttPaymentManager.beginPendingTxn(requestId, amount, phone, terminalId);
+        }
 
         tranType = TxnConstants.SALE;
         topupAmount = parseAmountSafe(amount);
@@ -1658,7 +1681,9 @@ public class MainActivity extends AppCompatActivity {
                 MqttLog.e("MQTT: Bank Intent NULL for card sale");
                 AppLogger.trxn_log(this, StatusConstants.ERR_BANK_INTENT_NULL_LOG,
                         "MQTT Bank Intent NULL for request_id=" + requestId);
-                publishMqttSaleResult(false, "Bank Intent NULL", null);
+                if (mqttPaymentManager != null) {
+                    mqttPaymentManager.publishSaleResult(false, "Bank Intent NULL", null);
+                }
                 return;
             }
 
@@ -1666,7 +1691,9 @@ public class MainActivity extends AppCompatActivity {
             startPayment(bankIntent);
         } catch (Exception e) {
             MqttLog.e("MQTT: Failed to start card sale", e);
-            publishMqttSaleResult(false, e.getMessage(), null);
+            if (mqttPaymentManager != null) {
+                mqttPaymentManager.publishSaleResult(false, e.getMessage(), null);
+            }
         }
     }
 
@@ -1683,80 +1710,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void publishMqttSaleResult(boolean success, String message, Intent bankData) {
-        try {
-            JSONObject response = new JSONObject();
-            response.put("request_id", mqttRequestId);
-            response.put("amount", mqttAmount);
-            response.put("phone", mqttPhone);
-            response.put("terminalid", mqttTerminalId);
-            response.put("status", success ? "SUCCESS" : "FAILED");
-            response.put("message", message == null ? "" : message);
-            response.put("device_serial", deviceSerialNumber);
-
-            if (bankData != null && bankData.getExtras() != null) {
-                String result = bankData.getExtras().getString(JsonKeys.RESULT);
-                if (result != null) {
-                    String clean = result
-                            .replace(BankConstants.STX, "")
-                            .replace(BankConstants.ETX, "")
-                            .trim();
-                    try {
-                        response.put("bank_result", new JSONObject(clean));
-                    } catch (Exception ignore) {
-                        response.put("bank_result_raw", clean);
-                    }
-                }
-            }
-
-            String payload = response.toString();
-            AppLogger.trxn_log(this, BankConstants.MQTT_OUTBOUND, payload);
-            MqttLog.i("MQTT_OUTBOUND: " + payload);
-
-            if (mqttManager != null && mqttManager.isConnected()) {
-                boolean published = mqttManager.publish(mqttReplyTopic, payload);
-                MqttLog.i("MQTT: Published sale response to " + mqttReplyTopic + " ok=" + published);
-                Toast.makeText(this,
-                        published ? "MQTT response published" : "MQTT publish failed",
-                        Toast.LENGTH_SHORT).show();
-            } else {
-                MqttLog.e("MQTT: Cannot publish response, client not connected");
-            }
-        } catch (Exception e) {
-            MqttLog.e("MQTT: Failed to publish sale response", e);
-        } finally {
-            mqttTxnPending = false;
-        }
-    }
-
-    private void maybePublishMqttBankResult(boolean success, Intent bankData, String fallbackMessage) {
-        if (!IntegrationModeStore.isCloud(this) || !mqttTxnPending) {
-            return;
-        }
-        String msg = fallbackMessage;
-        if (bankData != null && bankData.getExtras() != null) {
-            try {
-                String result = bankData.getExtras().getString(JsonKeys.RESULT);
-                if (result != null) {
-                    String clean = result
-                            .replace(BankConstants.STX, "")
-                            .replace(BankConstants.ETX, "")
-                            .trim();
-                    JSONObject root = new JSONObject(clean);
-                    msg = root.optString(JsonKeys.STATUS_MSG, fallbackMessage);
-                    String statusCode = root.optString(JsonKeys.STATUS_CODE, "");
-                    if (!StatusConstants.STATUS_OK.equals(statusCode)) {
-                        success = false;
-                    }
-                }
-            } catch (Exception ignore) {
-                // keep fallback
-            }
-        }
-        publishMqttSaleResult(success, msg, bankData);
-    }
-
-    private void showMqttReceivedPopup(String topic, String message) {
+    private void showMqttReceivedPopup(String title, String topic, String message) {
         if (isFinishing() || isDestroyed()) {
             return;
         }
@@ -1768,14 +1722,16 @@ public class MainActivity extends AppCompatActivity {
                 ? "(empty message)"
                 : message;
 
+        Log.d(TAG, "MQTT Message data : " + displayData);
         mqttMessageDialog = new AlertDialog.Builder(this)
-                .setTitle("MQTT Card Request")
+                .setTitle(title == null || title.trim().isEmpty() ? "MQTT Request" : title)
                 .setMessage("Topic:\n" + topic + "\n\nNormalized Data:\n" + displayData)
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> dialog.dismiss())
                 .setCancelable(true)
                 .create();
         mqttMessageDialog.show();
     }
+
 
     private String timeStamp() {
         return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date());

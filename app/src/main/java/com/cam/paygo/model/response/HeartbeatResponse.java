@@ -42,6 +42,9 @@ public class HeartbeatResponse {
         @SerializedName("integration_type")
         private String integrationType;
 
+        @SerializedName("qr_type")
+        private String qrType;
+
         public int getDeviceId() {
             return deviceId;
         }
@@ -60,6 +63,10 @@ public class HeartbeatResponse {
 
         public String getIntegrationType() {
             return integrationType;
+        }
+
+        public String getQrType() {
+            return qrType;
         }
     }
 }

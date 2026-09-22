@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/qr_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_mint_gradient"
+    tools:context=".qr.QrPaymentActivity">
+
+    <!-- Soft atmosphere (match MainActivity language) -->
+    <View
+        android:layout_width="180dp"
+        android:layout_height="180dp"
+        android:alpha="0.28"
+        android:background="@drawable/blob_white_soft"
+        android:translationX="-70dp"
+        android:translationY="-20dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <View
+        android:layout_width="220dp"
+        android:layout_height="220dp"
+        android:alpha="0.35"
+        android:background="@drawable/blob_lime"
+        android:translationX="90dp"
+        android:translationY="40dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- TOP: brand + title + amount -->
+    <LinearLayout
+        android:id="@+id/qr_top_section"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:layout_marginTop="28dp"
+        android:layout_marginEnd="24dp"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:text="@string/brand_pay"
+                android:textColor="@color/text_dark_navy"
+                android:textSize="28sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:text="@string/brand_go"
+                android:textColor="@color/brand_accent"
+                android:textSize="28sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_qr_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/qr_scan_to_pay"
+            android:textColor="@color/text_dark_navy"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_qr_subtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/qr_scan_hint"
+            android:textColor="@color/text_subtle"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/tv_qr_amount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:textColor="@color/colorGreen"
+            android:textSize="34sp"
+            android:textStyle="bold"
+            tools:text="₹20" />
+
+        <TextView
+            android:id="@+id/tv_qr_request_id"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:ellipsize="middle"
+            android:maxLines="1"
+            android:textColor="@color/text_body"
+            android:textSize="12sp"
+            tools:text="Req: testing210926107" />
+    </LinearLayout>
+
+    <!-- CENTER: QR card OR success/failed result -->
+    <FrameLayout
+        android:id="@+id/qr_center_section"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="28dp"
+        android:layout_marginEnd="28dp"
+        android:background="@drawable/bg_qr_card"
+        android:elevation="4dp"
+        android:padding="20dp"
+        app:layout_constraintBottom_toTopOf="@id/qr_bottom_section"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/qr_top_section"
+        app:layout_constraintVertical_bias="0.45">
+
+        <ImageView
+            android:id="@+id/iv_qr_code"
+            android:layout_width="240dp"
+            android:layout_height="240dp"
+            android:layout_gravity="center"
+            android:background="@color/white"
+            android:contentDescription="@string/qr_code_content_description"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            tools:src="@android:drawable/ic_menu_gallery" />
+
+        <LinearLayout
+            android:id="@+id/qr_result_section"
+            android:layout_width="match_parent"
+            android:layout_height="240dp"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <ImageView
+                android:id="@+id/iv_qr_result_icon"
+                android:layout_width="96dp"
+                android:layout_height="96dp"
+                android:contentDescription="@string/qr_code_content_description"
+                tools:src="@drawable/ic_qr_success_check" />
+
+            <TextView
+                android:id="@+id/tv_qr_result_message"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:gravity="center"
+                android:textColor="@color/text_dark_navy"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                tools:text="@string/qr_payment_success" />
+
+            <TextView
+                android:id="@+id/tv_qr_result_hint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:textColor="@color/text_subtle"
+                android:textSize="13sp"
+                tools:text="@string/qr_payment_success_hint" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- BOTTOM: expiry timer + actions -->
+    <LinearLayout
+        android:id="@+id/qr_bottom_section"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="28dp"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <TextView
+            android:id="@+id/tv_qr_timer_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/qr_expires_in"
+            android:textColor="@color/text_subtle"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tv_qr_timer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:fontFamily="monospace"
+            android:textColor="@color/text_dark_navy"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            tools:text="05:00" />
+
+        <ProgressBar
+            android:id="@+id/pb_qr_timer"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="8dp"
+            android:layout_marginTop="14dp"
+            android:indeterminate="false"
+            android:max="300"
+            android:progress="300"
+            android:progressTint="@color/brand_accent"
+            android:progressBackgroundTint="@color/light_grey" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_qr_close"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/qr_close"
+            android:textColor="@color/text_dark_navy"
+            app:strokeColor="@color/brand_accent" />
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
