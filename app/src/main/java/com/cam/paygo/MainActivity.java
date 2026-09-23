@@ -64,6 +64,7 @@ import com.cam.paygo.api.ApiConstants;
 import com.cam.paygo.bank.ABPBank;
 import com.cam.paygo.bank.BankResponseProcessor;
 import com.cam.paygo.card.CardDetector;
+import com.cam.paygo.constants.AcquirerConstants;
 import com.cam.paygo.constants.AppConstants;
 import com.cam.paygo.constants.BankConstants;
 import com.cam.paygo.constants.IntegrationConstants;
@@ -71,6 +72,9 @@ import com.cam.paygo.constants.JsonKeys;
 import com.cam.paygo.constants.QrTypeConstants;
 import com.cam.paygo.constants.StatusConstants;
 import com.cam.paygo.constants.TxnConstants;
+import com.cam.paygo.frog8.Frog8App;
+import com.cam.paygo.frog8.Frog8ResponseProcessor;
+import com.cam.paygo.manager.AcquirerStore;
 import com.cam.paygo.manager.AuthManager;
 import com.cam.paygo.manager.HeartbeatManager;
 import com.cam.paygo.manager.IntegrationModeStore;
@@ -86,6 +90,7 @@ import com.cam.paygo.repository.AuthRepository;
 import com.cam.paygo.repository.DeviceRepository;
 import com.cam.paygo.utils.AppLogger;
 import com.cam.paygo.utils.LogUploadWorker;
+import com.cam.paygo.utils.PaxDeviceHelper;
 import com.google.android.material.navigation.NavigationView;
 import com.pax.dal.IDAL;
 import com.pax.dal.entity.ENavigationKey;
@@ -117,6 +122,8 @@ public class MainActivity extends AppCompatActivity {
     private Context context;
     private ABPBank abpBank;
     private BankResponseProcessor bankResponseProcessor;
+    private Frog8App frog8App;
+    private Frog8ResponseProcessor frog8ResponseProcessor;
     private long topupAmount = 0;
     private String deviceSerialNumber = "";
     private String deviceModel = "";
@@ -166,6 +173,8 @@ public class MainActivity extends AppCompatActivity {
     private FlowState flowState = FlowState.IDLE;
     /** True from paymentLauncher.launch until ActivityResult returns — blocks a second bank Intent. */
     private boolean bankLaunchPending = false;
+    /** True while Frog8 APP_TO_APP (FROG8 card Sale) is in flight. */
+    private boolean frog8LaunchPending = false;
     /** Payment 65s elapsed while bank still in flight; start enquiry only after that result (if non-OK). */
     private boolean awaitingEnquiryAfterPaymentTimeout = false;
     /** True after hard abort APB timeout was already sent to TVM (ignore late bank result). */
@@ -184,6 +193,8 @@ public class MainActivity extends AppCompatActivity {
         copyLibDeviceConfigSoToInternalStorage();
         patchNativeLibrarySearchPath();
         abpBank = new ABPBank(this);
+        frog8App = new Frog8App(this);
+        frog8ResponseProcessor = new Frog8ResponseProcessor(this);
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
@@ -258,8 +269,9 @@ public class MainActivity extends AppCompatActivity {
         });
 
         try {
-            myCardDetector = new CardDetector(this, iDal);
-            myCardDetector.setCallback(new CardDetector.Callback() {
+            if (PaxDeviceHelper.isPaxDevice()) {
+                myCardDetector = new CardDetector(this, iDal);
+                myCardDetector.setCallback(new CardDetector.Callback() {
                 @SuppressLint("SetTextI18n")
                 @Override
                 public void onCardDetected(String cardType, String uid, String balance, Intent intentToLaunch, String tranType, String topupAmount, String sourceTxnId, String dbTxnId) {
@@ -376,12 +388,17 @@ public class MainActivity extends AppCompatActivity {
                     Log.d(TAG, "On Error : " + error);
                 }
             });
+            } else {
+                Log.w(TAG, "skip CardDetector — not a PAX device");
+            }
 
         } catch (Exception e) {
             e.printStackTrace();
+        } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+            Log.e(TAG, "CardDetector unavailable — PAX native lib missing", e);
         }
 
-        // Initialize UART
+        // Initialize UART (no-op native init on non-PAX)
         uartManager = UartManager.getInstance(this);
         uartManager.setCallback((data, dbTxnId) -> {
             Log.d("MainActivity", "UART Trigger: " + data);
@@ -531,7 +548,10 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> applyIntegrationMode(type, true)));
         HeartbeatManager.getInstance().setQrTypeListener(type ->
                 runOnUiThread(() -> applyQrType(type, true)));
+        HeartbeatManager.getInstance().setAcquirerListener(type ->
+                runOnUiThread(() -> applyAcquirer(type, true)));
         applyQrType(QrTypeStore.get(this), false);
+        applyAcquirer(AcquirerStore.get(this), false);
         initAuthFlow();
 
         // Periodic Upload Worker
@@ -847,10 +867,17 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void iDalSetting(Boolean isSet) {
+        if (!PaxDeviceHelper.isPaxDevice()) {
+            Log.w(TAG, "skip iDalSetting — not a PAX device");
+            return;
+        }
         try {
             iDal = NeptuneLiteUser.getInstance().getDal(getApplicationContext());
         } catch (Exception e) {
             Log.e(TAG, "iDal initialization failed", e);
+            return;
+        } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+            Log.e(TAG, "iDal initialization failed — PAX native lib missing", e);
             return;
         }
         try {
@@ -860,6 +887,8 @@ public class MainActivity extends AppCompatActivity {
             iDal.getSys().enableNavigationKey(ENavigationKey.RECENT, isSet);
         } catch (Exception e) {
             Log.e(TAG, "iDalSetting apply failed", e);
+        } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+            Log.e(TAG, "iDalSetting apply failed — PAX native lib missing", e);
         }
     }
 
@@ -1285,6 +1314,44 @@ public class MainActivity extends AppCompatActivity {
                     }
             );
 
+    /**
+     * Frog8 APP_TO_APP result (card Sale when acquirer=FROG8).
+     * Separate from paymentLauncher — response extras are resultCode 2700/2701/2702, not VizPay STX JSON.
+     */
+    private final ActivityResultLauncher<Intent> frog8PaymentLauncher =
+            registerForActivityResult(
+                    new ActivityResultContracts.StartActivityForResult(),
+                    result -> {
+                        frog8LaunchPending = false;
+                        clearPaymentEnquiryTimers();
+                        flowState = FlowState.IDLE;
+
+                        Intent data = result.getData();
+                        Frog8ResponseProcessor.Outcome outcome =
+                                frog8ResponseProcessor != null
+                                        ? frog8ResponseProcessor.process(data)
+                                        : new Frog8ResponseProcessor.Outcome(
+                                        false, "Frog8 processor unavailable", null);
+
+                        // Prefer Intent extras even when Activity resultCode is not RESULT_OK
+                        // (guide returns resultCode string in extras).
+                        boolean success = outcome.success;
+                        String message = outcome.message;
+                        if (data == null && result.getResultCode() != Activity.RESULT_OK) {
+                            success = false;
+                            message = "Frog8 cancelled or no response";
+                        }
+
+                        MqttLog.i("MQTT: FROG8 APP_TO_APP result success=" + success
+                                + " message=" + message
+                                + " activityResult=" + result.getResultCode());
+
+                        if (mqttPaymentManager != null) {
+                            mqttPaymentManager.publishSaleResult(success, message, data);
+                        }
+                    }
+            );
+
     private String extractResponseType(Intent data) {
         if (data == null || data.getExtras() == null) return null;
         String result = data.getExtras().getString(JsonKeys.RESULT);
@@ -1474,6 +1541,11 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
+            public void onFrog8AppToAppRequested(String requestId, String amount, String phone, String terminalId) {
+                startFrog8AppToApp(requestId, amount, phone, terminalId);
+            }
+
+            @Override
             public void onAnyQrDisplay(String requestId, String amount, String orderSn, String datetime, String ctime) {
                 Intent qrIntent = QrPaymentActivity.createIntent(
                         MainActivity.this, orderSn, amount, requestId, datetime, ctime);
@@ -1510,7 +1582,7 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public boolean isBankBusy() {
-                return bankLaunchPending;
+                return bankLaunchPending || frog8LaunchPending;
             }
 
             @Override
@@ -1525,6 +1597,13 @@ public class MainActivity extends AppCompatActivity {
      */
     private void applyIntegrationMode(String type, boolean fromServer) {
         String next = IntegrationConstants.orDefault(type);
+
+        // Non-PAX devices have no UART native libs — force CLOUD (MQTT) for host channel.
+        if (!PaxDeviceHelper.isPaxDevice() && IntegrationConstants.USB.equals(next)) {
+            Log.w(TAG, "Non-PAX device: forcing CLOUD instead of USB (UART unavailable)");
+            next = IntegrationConstants.CLOUD;
+        }
+
         String prev = IntegrationModeStore.get(this);
         if (fromServer && prev.equals(next)) {
             Log.d(TAG, "integration_type unchanged=" + next);
@@ -1560,15 +1639,34 @@ public class MainActivity extends AppCompatActivity {
         Log.i(TAG, "APPLY qr_type=" + next + " previous=" + prev + " fromServer=" + fromServer);
     }
 
+    private void applyAcquirer(String type, boolean fromServer) {
+        String next = AcquirerConstants.orDefault(type);
+        String prev = AcquirerStore.get(this);
+        if (fromServer && prev.equals(next)) {
+            Log.d(TAG, "acquirer unchanged=" + next);
+            return;
+        }
+        AcquirerStore.set(this, next);
+        Log.i(TAG, "APPLY acquirer=" + next + " previous=" + prev + " fromServer=" + fromServer);
+    }
+
     private void startUartChannel() {
+        if (!PaxDeviceHelper.isPaxDevice()) {
+            Log.w(TAG, "skip UART channel — not a PAX device");
+            return;
+        }
         if (uartManager == null) {
             uartManager = UartManager.getInstance(this);
         }
-        if (uartManager.connect()) {
-            uartManager.startListening();
-            Log.i(TAG, "UART channel started");
-        } else {
-            Log.e(TAG, "UART channel failed to start");
+        try {
+            if (uartManager.connect()) {
+                uartManager.startListening();
+                Log.i(TAG, "UART channel started");
+            } else {
+                Log.e(TAG, "UART channel failed to start");
+            }
+        } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+            Log.e(TAG, "UART channel unavailable on this device", e);
         }
     }
 
@@ -1632,6 +1730,84 @@ public class MainActivity extends AppCompatActivity {
             startPayment(bankIntent);
         } catch (Exception e) {
             MqttLog.e("MQTT: Failed to start AIRTEL QR", e);
+            if (mqttPaymentManager != null) {
+                mqttPaymentManager.publishSaleResult(false, e.getMessage(), null);
+            }
+        }
+    }
+
+    /**
+     * Frog8 APP_TO_APP for MQTT card Sale when acquirer=FROG8.
+     * Bundle intent + frog8PaymentLauncher (see App_to_App_Integration_Guide.md).
+     */
+    private void startFrog8AppToApp(String requestId, String amount, String phone, String terminalId) {
+        if (frog8LaunchPending || bankLaunchPending) {
+            MqttLog.e("MQTT: FROG8 launch ignored — payment already in progress");
+            Toast.makeText(this, "Payment already in progress", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (mqttPaymentManager != null) {
+            mqttPaymentManager.beginPendingTxn(requestId, amount, phone, terminalId);
+        }
+
+        tranType = TxnConstants.SALE;
+        topupAmount = parseAmountSafe(amount);
+        OPERATOR_ORDER_ID = requestId;
+        SOURCE_TXN_ID = requestId;
+        UDF1 = phone == null ? "" : phone;
+        UDF2 = terminalId == null ? "" : terminalId;
+        UDF3 = deviceSerialNumber;
+
+        String remark = "";
+        if (!UDF1.isEmpty() || !UDF2.isEmpty()) {
+            remark = "phone=" + UDF1 + ";terminalid=" + UDF2;
+        }
+
+        try {
+            clearPaymentEnquiryTimers();
+            awaitingEnquiryAfterPaymentTimeout = false;
+            hardAbortSentToTvm = false;
+
+            if (frog8App == null) {
+                frog8App = new Frog8App(this);
+            }
+            Intent frog8Intent = frog8App.createSaleIntent(amount, requestId, remark);
+            if (frog8Intent == null) {
+                MqttLog.e("MQTT: Frog8 Intent NULL for FROG8 card Sale request_id=" + requestId);
+                AppLogger.trxn_log(this, StatusConstants.ERR_BANK_INTENT_NULL_LOG,
+                        "Frog8 Intent NULL — app missing or invalid amount request_id=" + requestId);
+                Toast.makeText(this, "Frog8 payment app not available", Toast.LENGTH_SHORT).show();
+                if (mqttPaymentManager != null) {
+                    mqttPaymentManager.publishSaleResult(false, "Frog8 app not installed or invalid amount", null);
+                }
+                return;
+            }
+
+            MqttLog.i("MQTT: Launching FROG8 Frog8 APP_TO_APP Sale request_id=" + requestId
+                    + " amount=" + amount);
+            flowState = FlowState.PAYMENT;
+            paymentStartedAtMs = SystemClock.elapsedRealtime();
+            frog8LaunchPending = true;
+
+            if (paymentTimeoutRunnable != null) {
+                handler.removeCallbacks(paymentTimeoutRunnable);
+            }
+            paymentTimeoutRunnable = () -> {
+                if (!frog8LaunchPending) {
+                    return;
+                }
+                Log.w(TAG, "FROG8 APP_TO_APP payment timeout — waiting for activity result");
+                AppLogger.trxn_log(context, StatusConstants.ERR_REQUEST_TIMEOUT_LOG,
+                        "FROG8 Frog8 payment timeout still pending");
+            };
+            handler.postDelayed(paymentTimeoutRunnable, REQUEST_TIMEOUT);
+
+            frog8PaymentLauncher.launch(frog8Intent);
+        } catch (Exception e) {
+            frog8LaunchPending = false;
+            flowState = FlowState.IDLE;
+            MqttLog.e("MQTT: Failed to start FROG8 APP_TO_APP", e);
             if (mqttPaymentManager != null) {
                 mqttPaymentManager.publishSaleResult(false, e.getMessage(), null);
             }
@@ -1755,8 +1931,12 @@ public class MainActivity extends AppCompatActivity {
             filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
             registerReceiver(usbReceiver, filter);
 
-            if (IntegrationModeStore.isUsb(this) && uartManager != null) {
-                uartManager.connect();
+            if (IntegrationModeStore.isUsb(this) && PaxDeviceHelper.isPaxDevice() && uartManager != null) {
+                try {
+                    uartManager.connect();
+                } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+                    Log.e(TAG, "UART reconnect skipped — PAX native lib missing", e);
+                }
             }
         } catch (Exception e) {
             Log.e("UART", "UART open/send error", e);

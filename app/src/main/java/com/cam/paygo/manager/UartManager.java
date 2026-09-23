@@ -15,6 +15,7 @@ import com.cam.paygo.constants.TvmErrorCodes;
 import com.cam.paygo.constants.TxnConstants;
 import com.cam.paygo.constants.UartConstants;
 import com.cam.paygo.utils.AppLogger;
+import com.cam.paygo.utils.PaxDeviceHelper;
 import com.pax.dal.IDAL;
 import com.pax.dal.IComm;
 import com.pax.dal.entity.EUartPort;
@@ -60,6 +61,11 @@ public class UartManager {
     }
 
     private void initUart() {
+        if (!PaxDeviceHelper.isPaxDevice()) {
+            Log.w(TAG, "skip UART init — not a PAX device (no libpaxapijni.so)");
+            uartComm = null;
+            return;
+        }
         try {
             String model = android.os.Build.MODEL;
             Log.d(TAG, "Device model: " + model);
@@ -75,6 +81,10 @@ public class UartManager {
 
         } catch (Exception e) {
             Log.e(TAG, "UART init failed: " + e.getMessage(), e);
+            uartComm = null;
+        } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+            Log.e(TAG, "UART init failed — PAX native lib missing: " + e.getMessage(), e);
+            uartComm = null;
         }
     }
 
@@ -87,6 +97,10 @@ public class UartManager {
             Log.i(TAG, "skip UART connect — mode=" + IntegrationModeStore.get(context));
             return false;
         }
+        if (!PaxDeviceHelper.isPaxDevice()) {
+            Log.w(TAG, "skip UART connect — not a PAX device");
+            return false;
+        }
         try {
             if (uartComm != null) {
                 uartComm.connect();
@@ -95,6 +109,9 @@ public class UartManager {
             }
         } catch (CommException e) {
             Log.e(TAG, "UART connect failed: " + e.getMessage());
+        } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+            Log.e(TAG, "UART connect failed — PAX native lib missing: " + e.getMessage(), e);
+            uartComm = null;
         }
         return false;
     }

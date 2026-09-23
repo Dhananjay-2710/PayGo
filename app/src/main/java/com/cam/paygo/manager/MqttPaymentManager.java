@@ -23,14 +23,24 @@ import java.util.function.Supplier;
 /**
  * MQTT connect / inbound route / pending txn / publish for cloud payment mode.
  * UI and bank launches stay in the Activity via {@link Listener}.
+ * Card and QR both branch on {@link AcquirerStore} (AIRTEL|FROG8), not qr_type.
  */
 public final class MqttPaymentManager {
 
     public interface Listener {
+        /** AIRTEL acquirer: existing bank card sale intent. */
         void onCardSaleRequested(String requestId, String amount, String phone, String terminalId);
 
+        /** AIRTEL acquirer: existing bank QR intent. */
         void onAirtelQrRequested(String requestId, String amount);
 
+        /**
+         * FROG8 acquirer + MQTT card Sale: Shukria APP_TO_APP.
+         * phone/terminalId from card request.
+         */
+        void onFrog8AppToAppRequested(String requestId, String amount, String phone, String terminalId);
+
+        /** Legacy ANY qr_type display screen (order_sn QR). Not used for acquirer FROG8. */
         void onAnyQrDisplay(String requestId, String amount, String orderSn, String datetime, String ctime);
 
         void onQrPaymentSuccess(String requestId, String amount);
@@ -257,30 +267,77 @@ public final class MqttPaymentManager {
 
             notifyPopup("MQTT Card Request", topic, MqttPayloadHelper.safePretty(normalized));
 
-            if (requestId.isEmpty() || amountForBank.isEmpty()) {
-                MqttLog.e("MQTT: Missing request_id or amount for card sale"
-                        + " request_id=[" + requestId + "] amount_raw=[" + amountRaw
-                        + "] amount_for_bank=[" + amountForBank + "]");
-                notifyToast("MQTT card sale missing request_id/amount");
-                return;
-            }
-            if (txnPending || isBankBusy()) {
-                MqttLog.e("MQTT: Sale already in progress, ignoring new request");
-                notifyToast("MQTT sale already in progress");
-                return;
-            }
-
-            MqttLog.i("MQTT: Amount " + amountRaw + " -> bank amount " + amountForBank);
-            Listener l = listener;
-            if (l != null) {
-                l.onCardSaleRequested(requestId, amountForBank, phone, terminalId);
-            }
+            routeCardRequest(topic, requestId, amountRaw, amountForBank, phone, terminalId, normalized);
         } catch (Exception e) {
             MqttLog.e("MQTT: Failed to handle inbound message", e);
             notifyToast("Invalid MQTT JSON");
         }
     }
 
+    /**
+     * Card sale: branch by {@link AcquirerStore} only (not qr_type).
+     * AIRTEL → bank card sale; FROG8 → Shukria APP_TO_APP Sale.
+     * qr_type is AIRTEL|ANY only — never FROG8.
+     */
+    private void routeCardRequest(
+            String topic,
+            String requestId,
+            String amountRaw,
+            String amountForBank,
+            String phone,
+            String terminalId,
+            JSONObject normalized
+    ) {
+        MqttLog.i("MQTT: Card request received request_id=" + requestId
+                + " money=" + amountRaw
+                + " amount=" + amountForBank
+                + " phone=" + phone
+                + " terminalid=" + terminalId
+                + " topic=" + topic
+                + " acquirer=" + AcquirerStore.get(appContext));
+
+        if (requestId == null || requestId.trim().isEmpty()
+                || amountForBank == null || amountForBank.trim().isEmpty()) {
+            MqttLog.e("MQTT: Missing request_id or amount for card sale"
+                    + " request_id=[" + requestId + "] amount_raw=[" + amountRaw
+                    + "] amount_for_bank=[" + amountForBank + "]");
+            notifyToast("MQTT card sale missing request_id/amount");
+            return;
+        }
+        if (txnPending || isBankBusy()) {
+            MqttLog.e("MQTT: Sale already in progress, ignoring new request");
+            notifyToast("MQTT sale already in progress");
+            return;
+        }
+
+        Listener l = listener;
+        if (l == null) {
+            return;
+        }
+
+        if (AcquirerStore.isFrog8(appContext)) {
+            MqttLog.i("MQTT: Card → FROG8 APP_TO_APP");
+            l.onFrog8AppToAppRequested(
+                    requestId.trim(),
+                    amountForBank.trim(),
+                    phone == null ? "" : phone.trim(),
+                    terminalId == null ? "" : terminalId.trim());
+            return;
+        }
+
+        MqttLog.i("MQTT: Card → AIRTEL bank sale");
+        l.onCardSaleRequested(
+                requestId.trim(),
+                amountForBank.trim(),
+                phone == null ? "" : phone.trim(),
+                terminalId == null ? "" : terminalId.trim());
+    }
+
+    /**
+     * QR payment: uses bank QR intent (independent of FROG8 APP_TO_APP).
+     * FROG8 APP_TO_APP applies only to MQTT card + acquirer=FROG8.
+     * qr_type is AIRTEL|ANY only — never FROG8.
+     */
     private void routeQrRequest(
             String topic,
             String requestId,
@@ -298,43 +355,30 @@ public final class MqttPaymentManager {
                 + " order_sn=" + orderSn
                 + " ctime=" + ctime
                 + " topic=" + topic
-                + " qr_type=" + QrTypeStore.get(appContext));
+                + " acquirer=" + AcquirerStore.get(appContext));
 
-        if (QrTypeStore.isAirtel(appContext)) {
-            String bankAmount = (amountForBank == null || amountForBank.isEmpty()) ? amountRaw : amountForBank;
-            if (requestId == null || requestId.trim().isEmpty()
-                    || bankAmount == null || bankAmount.trim().isEmpty()) {
-                MqttLog.e("MQTT: AIRTEL QR missing request_id or amount");
-                notifyToast("MQTT QR missing data");
-                notifyPopup("MQTT QR Request", topic, MqttPayloadHelper.safePretty(normalized));
-                return;
-            }
-            if (txnPending || isBankBusy()) {
-                MqttLog.e("MQTT: Bank txn already in progress, ignoring AIRTEL QR");
-                notifyToast("Payment already in progress");
-                return;
-            }
-            Listener l = listener;
-            if (l != null) {
-                l.onAirtelQrRequested(requestId.trim(), bankAmount.trim());
-            }
-            return;
-        }
-
-        if (orderSn == null || orderSn.trim().isEmpty()) {
-            MqttLog.e("MQTT: QR missing order_sn — cannot open QR screen");
-            notifyToast("MQTT QR missing order_sn");
+        String bankAmount = (amountForBank == null || amountForBank.isEmpty()) ? amountRaw : amountForBank;
+        if (requestId == null || requestId.trim().isEmpty()
+                || bankAmount == null || bankAmount.trim().isEmpty()) {
+            MqttLog.e("MQTT: QR missing request_id or amount");
+            notifyToast("MQTT QR missing data");
             notifyPopup("MQTT QR Request", topic, MqttPayloadHelper.safePretty(normalized));
             return;
         }
-
-        String amountToShow = (amountForBank == null || amountForBank.isEmpty())
-                ? amountRaw
-                : amountForBank;
-        Listener l = listener;
-        if (l != null) {
-            l.onAnyQrDisplay(requestId, amountToShow, orderSn.trim(), datetime, ctime);
+        if (txnPending || isBankBusy()) {
+            MqttLog.e("MQTT: Bank txn already in progress, ignoring QR");
+            notifyToast("Payment already in progress");
+            return;
         }
+
+        Listener l = listener;
+        if (l == null) {
+            return;
+        }
+
+        // FROG8 APP_TO_APP is for MQTT card Sale only; QR keeps bank QR path.
+        MqttLog.i("MQTT: QR → bank QR (acquirer=" + AcquirerStore.get(appContext) + ")");
+        l.onAirtelQrRequested(requestId.trim(), bankAmount.trim());
     }
 
     public void publishBankResult(boolean success, Intent bankData, String fallbackMessage) {

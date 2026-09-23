@@ -17,3 +17,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "PayGo"
 include ':app'
+include ':cloud_layer'
+project(':cloud_layer').projectDir = new File(settingsDir, '../cloud_layer')

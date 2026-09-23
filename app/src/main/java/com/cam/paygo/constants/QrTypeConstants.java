@@ -1,7 +1,8 @@
 package com.cam.paygo.constants;
 
 /**
- * QR payment routing: ANY (display order_sn QR) vs AIRTEL (bank app QR txn).
+ * QR display/routing mode from F8TMS (not acquirer).
+ * Values: AIRTEL | ANY — never FROG8 (FROG8 belongs to {@link AcquirerConstants}).
  */
 public final class QrTypeConstants {
     private QrTypeConstants() {

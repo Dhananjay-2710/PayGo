@@ -40,7 +40,7 @@ android {
             debuggable true
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            buildConfigField "String", "SERVER_URL", "\"https://uat.f8tms.veriphy.io/\""
+            buildConfigField "String", "SERVER_URL", "\"https://f8tms.veriphy.io/\""
             buildConfigField "String", "EMAIL", "\"dhananjay.g@f8payments.com\""
             buildConfigField "String", "PASSWORD", "\"Dhananjay@1234\""
             buildConfigField "boolean", "ENABLE_TEST_ORDER_ID", "false"
@@ -75,13 +75,15 @@ android {
 }
 
 dependencies {
-    implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
+    // Exclude legacy MQTT JAR — use :cloud_layer module (Android 13+ receiver fix).
+    implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar']).matching {
+        exclude '**/cloudlayer-1.0.0.jar'
+        exclude '**/com.cam.mqtt-1.0.0.jar'
+    }
     implementation files('libs/NeptuneLiteApi_V4.17.00_20250808.jar')
 
-    // MQTT library JAR (renamed from com.cam.mqtt-1.0.0.jar)
-    // fileTree above already picks it up; keep explicit for clarity
-    implementation files('libs/cloudlayer-1.0.0.jar')
-    // Required at runtime because the MQTT JAR is thin (does not shade Paho/Gson)
+    implementation project(':cloud_layer')
+    // Required at runtime because the MQTT module does not shade Paho/Gson
     implementation libs.org.eclipse.paho.client.mqttv3
     implementation 'com.google.code.gson:gson:2.10.1'
 

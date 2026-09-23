@@ -34,6 +34,7 @@ public class HeartbeatManager {
     private final HeartbeatRepository repository;
     private IntegrationTypeListener integrationTypeListener;
     private QrTypeListener qrTypeListener;
+    private AcquirerListener acquirerListener;
 
     public interface IntegrationTypeListener {
         void onIntegrationType(String integrationType);
@@ -41,6 +42,10 @@ public class HeartbeatManager {
 
     public interface QrTypeListener {
         void onQrType(String qrType);
+    }
+
+    public interface AcquirerListener {
+        void onAcquirer(String acquirer);
     }
 
     private HeartbeatManager() {
@@ -61,6 +66,10 @@ public class HeartbeatManager {
 
     public void setQrTypeListener(QrTypeListener listener) {
         this.qrTypeListener = listener;
+    }
+
+    public void setAcquirerListener(AcquirerListener listener) {
+        this.acquirerListener = listener;
     }
 
     /** Start heartbeat using the latest token from {@link AuthManager}. */
@@ -139,6 +148,12 @@ public class HeartbeatManager {
                     if (qrType != null && !qrType.trim().isEmpty() && qrTypeListener != null) {
                         Log.i(TAG, "Heartbeat qr_type=" + qrType);
                         qrTypeListener.onQrType(qrType);
+                    }
+
+                    String acquirer = body.getData().getAcquirer();
+                    if (acquirer != null && !acquirer.trim().isEmpty() && acquirerListener != null) {
+                        Log.i(TAG, "Heartbeat acquirer=" + acquirer);
+                        acquirerListener.onAcquirer(acquirer);
                     }
                 } else if (response.code() == 401) {
                     AppLogger.api_log(context, AppConstants.HEARTBEAT_ERROR, "Unauthorized after refresh attempt");
